@@ -1,0 +1,45 @@
+@EndUserText.label : 'AVALON Upload Log Detail'
+@AbapCatalog.enhancementCategory : #NOT_EXTENSIBLE
+@AbapCatalog.tableCategory : #TRANSPARENT
+@AbapCatalog.deliveryClass : #A
+@AbapCatalog.dataMaintenance : #ALLOWED
+define table zfava_log_d {
+  key mandt     : mandt not null;
+  key zsession  : zz_session not null;
+  key proc_user : uname not null;
+  key iffprocdt : zz_iffirstprocdt not null;
+  key iffproctm : zz_iffirstproctm not null;
+  key zcount    : zz_count not null;
+  key zeline    : zz_eline not null;
+  buzei         : buzei;
+  umskz         : umskz;
+  hkont         : hkont;
+  kunnr         : kunnr;
+  lifnr         : lifnr;
+  mwskz         : mwskz;
+  @Semantics.amount.currencyCode : 'zfmj_log_h.waers'
+  fwbas         : fwbas;
+  wrbtr         : bapidoccur;
+  dmbtr         : bapidoccur;
+  valut         : valut;
+  zuonr         : dzuonr;
+  vbund         : rassc;
+  kostl         : kostl;
+  aufnr         : aufnr;
+  werks         : werks_d;
+  prctr         : prctr;
+  sgtxt         : sgtxt;
+  zterm         : dzterm;
+  zfbdt         : dzfbdt;
+  zlsch         : schzw_bseg;
+  posid         : ps_posid;
+  xref1         : xref1;
+  matnr         : matnr;
+  bupla         : bupla;
+  bcode         : bcode;
+  long_text     : zz_char255;
+  xref2         : xref2;
+  type          : bapi_mtype;
+  message       : bapi_msg;
+
+}

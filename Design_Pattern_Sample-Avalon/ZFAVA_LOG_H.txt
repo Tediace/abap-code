@@ -1,0 +1,26 @@
+@EndUserText.label : 'Avalon Upload Log Header'
+@AbapCatalog.enhancementCategory : #NOT_EXTENSIBLE
+@AbapCatalog.tableCategory : #TRANSPARENT
+@AbapCatalog.deliveryClass : #A
+@AbapCatalog.dataMaintenance : #ALLOWED
+define table zfava_log_h {
+  key mandt     : mandt not null;
+  key zsession  : zz_session not null;
+  key proc_user : uname not null;
+  key iffprocdt : zz_iffirstprocdt not null;
+  key iffproctm : zz_iffirstproctm not null;
+  key zcount    : zz_count not null;
+  key zeline    : zz_eline not null;
+  zpath         : localfile;
+  bukrs         : bukrs;
+  bldat         : bldat;
+  budat         : budat;
+  xblnr         : xblnr1;
+  bktxt         : bktxt;
+  blart         : blart;
+  waers         : waers;
+  belnr         : belnr_d;
+  type          : bapi_mtype;
+  message       : bapi_msg;
+
+}

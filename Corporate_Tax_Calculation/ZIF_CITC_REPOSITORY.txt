@@ -1,0 +1,32 @@
+INTERFACE zif_citc_repository
+  PUBLIC .
+
+  TYPES ty_t_saknr_range TYPE RANGE OF saknr.
+  TYPES ty_t_poper_range TYPE RANGE OF poper.
+  TYPES: BEGIN OF ty_source_citc,
+           companycode      TYPE bukrs,
+           fiscal_year       TYPE gjahr,
+           gl_account        TYPE saknr,
+           gl_account_desc   TYPE txt50,
+           currency          TYPE waers,
+           unaudited_balance TYPE hslxx,
+           is_permanent      TYPE abap_boolean,
+           is_timing         TYPE abap_boolean,
+           formula           TYPE zde_cit_formula,
+           return_1771_ia    TYPE char10,
+           return_1771_i     TYPE char10,
+           return_1771_ii    TYPE char10,
+         END OF ty_source_citc,
+
+         ty_t_source_citc TYPE STANDARD TABLE OF ty_source_citc WITH EMPTY KEY.
+
+  METHODS find_source_data IMPORTING companycode   TYPE bukrs
+                                     gl_accounts   TYPE ty_t_saknr_range
+                                     fiscal_year   TYPE gjahr
+                                     periods       TYPE ty_t_poper_range
+                           RETURNING VALUE(result) TYPE ty_t_source_citc.
+
+  METHODS find_local_curr IMPORTING companycode TYPE bukrs
+                          RETURNING VALUE(result) TYPE waers.
+
+ENDINTERFACE.

@@ -1,0 +1,52 @@
+CLASS zcl_setleaf_repository DEFINITION
+  PUBLIC
+  FINAL
+  INHERITING FROM zcl_repository_abstract
+  CREATE PUBLIC .
+
+  PUBLIC SECTION.
+    METHODS zif_repository~read REDEFINITION.
+  PROTECTED SECTION.
+  PRIVATE SECTION.
+ENDCLASS.
+
+
+
+CLASS zcl_setleaf_repository IMPLEMENTATION.
+  METHOD zif_repository~read.
+    FIELD-SYMBOLS: <setname> TYPE setleaf-setname,
+                   <result>  TYPE bpc_range_tab.
+
+    DATA : lwr_set_range TYPE bpc_ranges.
+
+    ASSIGN im_data TO <setname>.
+
+    result = NEW bpc_range_tab(  ).
+    ASSIGN result->* TO <result>.
+
+    IF <setname> IS NOT INITIAL
+     AND <setname> IS ASSIGNED.
+
+      SELECT
+      *
+      FROM setleaf
+      INTO TABLE @DATA(li_setleaf)
+      WHERE setname = @<setname>.
+
+      IF sy-subrc EQ 0.
+        SORT li_setleaf BY setclass subclass setname lineid.
+
+        LOOP AT li_setleaf INTO DATA(lw_setleaf).
+          lwr_set_range-sign   = lw_setleaf-valsign.
+          lwr_set_range-option = lw_setleaf-valoption.
+          lwr_set_range-low    = lw_setleaf-valfrom.
+          lwr_set_range-high   = lw_setleaf-valto.
+
+          APPEND lwr_set_range TO <result>.
+        ENDLOOP.
+      ENDIF.
+    ENDIF.
+
+  ENDMETHOD.
+
+ENDCLASS.

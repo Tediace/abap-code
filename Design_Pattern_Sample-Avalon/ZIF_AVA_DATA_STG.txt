@@ -1,0 +1,6 @@
+INTERFACE zif_ava_data_stg
+  PUBLIC .
+  DATA it_data TYPE zcl_ava_stg_repo=>ty_t_stg READ-ONLY.
+  DATA iv_filepath TYPE rlgrap-filename READ-ONLY.
+
+ENDINTERFACE.

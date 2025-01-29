@@ -1,0 +1,178 @@
+CLASS zcl_citc_data_service DEFINITION
+  PUBLIC
+  FINAL
+  CREATE PUBLIC .
+
+  PUBLIC SECTION.
+    INTERFACES zif_citc_data_service.
+    METHODS constructor IMPORTING io_asset_depre_repo TYPE REF TO zif_asset_depre_fisc_c_repo.
+
+  PROTECTED SECTION.
+  PRIVATE SECTION.
+    DATA mo_asset_depre_repo TYPE REF TO zif_asset_depre_fisc_c_repo.
+ENDCLASS.
+
+
+
+CLASS zcl_citc_data_service IMPLEMENTATION.
+  METHOD zif_citc_data_service~generate_data.
+
+    DATA gl_acc_range TYPE zif_asset_depre_fisc_c_repo=>ty_t_gl_acc_range.
+    DATA current_year_asset_tax_depre TYPE hslxx12.
+    DATA asset_depre TYPE  zif_asset_depre_fisc_c_repo=>ty_t_currentyear_asset_tax_dep.
+    DATA tmp_result TYPE zif_citc_data_service=>ty_t_data.
+
+    TYPES: BEGIN OF ty_levels,
+             gl_acc TYPE saknr,
+             level1 TYPE char20,
+             level2 TYPE char20,
+             level3 TYPE char20,
+             level4 TYPE char20,
+             level5 TYPE char20,
+           END OF ty_levels,
+
+           ty_t_levels TYPE STANDARD TABLE OF ty_levels WITH EMPTY KEY.
+
+    DATA(levels) = VALUE ty_t_levels(
+     ( gl_acc = '4*' level1 = 'Comprehensive' level2 = 'Net P/L' level3 = 'Operating P/L'
+       level4 = 'Gross P/L' level5 = 'Revenue' )
+     ( gl_acc = '5*' level1 = 'Comprehensive' level2 = 'Net P/L' level3 = 'Operating P/L'
+       level4 = 'Gross P/L' level5 = 'COGS' )
+     ( gl_acc = '6*' level1 = 'Comprehensive' level2 = 'Net P/L' level3 = 'Operating P/L'
+       level4 = 'Operating Expense' )
+     ( gl_acc = '7*' level1 = 'Comprehensive' level2 = 'Net P/L'
+       level3 = 'Other Income/ Expense' )
+     ( gl_acc = '8*' level1 = 'Comprehensive' level2 = 'Total OCI' ) ).
+
+    IF source_data IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    SELECT 'I' AS sign,
+           'EQ' AS option,
+           gl_account AS low,
+           CAST( ' ' AS CHAR( 10 ) ) AS high
+    FROM @source_data AS s
+    WHERE formula = @zif_citc_data_service=>cons_formula-depre
+    INTO TABLE @gl_acc_range.
+
+    IF gl_acc_range IS NOT INITIAL.
+      asset_depre = mo_asset_depre_repo->find_source_data(
+                            companycode       = source_data[ 1 ]-companycode
+                            fiscal_year       = source_data[ 1 ]-fiscal_year
+                            gl_accounts_range = gl_acc_range
+                            periods_range     = periods_range ).
+
+    ENDIF.
+
+    LOOP AT source_data INTO DATA(line_source).
+      APPEND INITIAL LINE TO tmp_result REFERENCE INTO DATA(line_result).
+      CLEAR current_year_asset_tax_depre.
+
+      line_result->gl_account = line_source-gl_account.
+      line_result->gl_account_description = line_source-gl_account_desc.
+      line_result->currency = line_source-currency.
+      line_result->unaudited_balance = line_source-unaudited_balance.
+      line_result->audited_balance = line_source-unaudited_balance. " initial
+      line_result->is_correction_permanent = line_source-is_permanent.
+      line_result->is_correction_timing = line_source-is_timing.
+      line_result->correction_formula = line_source-formula.
+      ASSIGN asset_depre[
+                 gl_account = line_source-gl_account ]-current_year_asset_tax_depre
+      TO FIELD-SYMBOL(<depre_val>).
+      IF <depre_val> IS ASSIGNED.
+        current_year_asset_tax_depre = <depre_val>.
+      ELSE.
+        current_year_asset_tax_depre = '0'.
+      ENDIF.
+      UNASSIGN <depre_val>.
+      IF line_source-is_permanent = abap_true.
+        line_result->fiscal_correction_permanent =
+                   zif_citc_data_service~calculate_fiscal_correction(
+                            formula                      = line_source-formula
+                            unaudited_bal_after_adj      = line_source-unaudited_balance
+                            current_year_asset_tax_depre = current_year_asset_tax_depre ).
+
+        line_result->fiscal_balance = line_result->audited_balance +
+                                        line_result->fiscal_correction_permanent.
+
+      ELSEIF line_source-is_timing = abap_true.
+        line_result->fiscal_correction_timing =
+                   zif_citc_data_service~calculate_fiscal_correction(
+                            formula                      = line_source-formula
+                            unaudited_bal_after_adj      = line_source-unaudited_balance
+                            current_year_asset_tax_depre = current_year_asset_tax_depre ).
+
+        line_result->fiscal_balance = line_result->audited_balance +
+                                        line_result->fiscal_correction_timing.
+
+      ELSE.
+        line_result->fiscal_balance = line_result->audited_balance.
+
+      ENDIF.
+      line_result->mapping_cit_return_1771_i = line_source-return_1771_i.
+      line_result->mapping_cit_return_1771_ia = line_source-return_1771_ia.
+      line_result->mapping_cit_return_1771_ii = line_source-return_1771_ii.
+
+
+    ENDLOOP.
+
+    SELECT *
+    FROM @tmp_result AS s
+    ORDER BY gl_account ASCENDING
+    INTO TABLE @tmp_result
+    ##ITAB_DB_SELECT.
+
+   LOOP AT levels INTO DATA(level).
+    DATA(gl_acc_range_inner) = VALUE zif_asset_depre_fisc_c_repo=>ty_t_gl_acc_range(
+                                                   ( sign = 'I'
+                                                    option = 'CP'
+                                                    low = level-gl_acc ) ).
+
+    SELECT *
+    FROM @tmp_result AS s
+    WHERE gl_account IN @gl_acc_range_inner
+    INTO TABLE @DATA(leveled_data).
+
+    LOOP AT leveled_data INTO DATA(line_leveled_data).
+      APPEND INITIAL LINE TO result REFERENCE INTO DATA(line_outtab).
+
+      line_outtab->* = CORRESPONDING #( line_leveled_data ).
+      line_outtab->level1 = level-level1.
+      line_outtab->level2 = level-level2.
+      line_outtab->level3 = level-level3.
+      line_outtab->level4 = level-level4.
+      line_outtab->level5 = level-level5.
+
+    ENDLOOP.
+    CLEAR: leveled_data, gl_acc_range.
+  ENDLOOP.
+
+
+  ENDMETHOD.
+
+  METHOD constructor.
+
+    IF io_asset_depre_repo IS BOUND.
+      mo_asset_depre_repo = io_asset_depre_repo.
+    ELSE.
+      mo_asset_depre_repo = NEW zcl_asset_depre_fisc_c_repo( ).
+    ENDIF.
+
+  ENDMETHOD.
+
+  METHOD zif_citc_data_service~calculate_fiscal_correction.
+    result = COND #(
+                   WHEN formula = zif_citc_data_service=>cons_formula-full
+                   THEN unaudited_bal_after_adj * -1
+                   WHEN formula = zif_citc_data_service=>cons_formula-_50
+                   THEN unaudited_bal_after_adj * '0.5-'
+                   WHEN formula = zif_citc_data_service=>cons_formula-depre
+                   THEN current_year_asset_tax_depre - unaudited_bal_after_adj ).
+  ENDMETHOD.
+
+  METHOD zif_citc_data_service~generate_summarize.
+
+  ENDMETHOD.
+
+ENDCLASS.

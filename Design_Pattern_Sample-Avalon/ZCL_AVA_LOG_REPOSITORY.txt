@@ -1,0 +1,158 @@
+CLASS zcl_ava_log_repository DEFINITION
+  PUBLIC
+  FINAL
+  CREATE PUBLIC
+  INHERITING FROM zcl_repository_abstract.
+
+  PUBLIC SECTION.
+    TYPES: BEGIN OF ty_source,
+             t_log_header TYPE STANDARD TABLE OF zfava_log_h WITH EMPTY KEY,
+             t_log_detail TYPE STANDARD TABLE OF zfava_log_d WITH EMPTY KEY,
+           END OF ty_source.
+
+    TYPES: BEGIN OF ty_rpt,
+             t_session_range  TYPE RANGE OF zz_session,
+             t_compcode_range TYPE RANGE OF bukrs,
+             t_docnum_range   TYPE RANGE OF belnr_d,
+             t_postdate_range TYPE RANGE OF budat,
+           END OF ty_rpt.
+
+    METHODS zif_repository~create_by_ref REDEFINITION.
+    METHODS zif_repository~read REDEFINITION.
+  PROTECTED SECTION.
+  PRIVATE SECTION.
+    METHODS read_by_session IMPORTING im_t_session_range TYPE ty_t_session_range
+                            RETURNING VALUE(result)      TYPE ty_source.
+
+    METHODS read_by_ava_rpt IMPORTING im_select_rpt TYPE ty_rpt
+                            RETURNING VALUE(result) TYPE ty_source.
+ENDCLASS.
+
+
+
+CLASS zcl_ava_log_repository IMPLEMENTATION.
+  METHOD zif_repository~create_by_ref.
+
+    FIELD-SYMBOLS <source> TYPE ty_source.
+    FIELD-SYMBOLS <result> TYPE ty_source.
+    ASSIGN im_data->* TO <source>.
+
+    CHECK <source> IS ASSIGNED.
+
+
+    MODIFY zfava_log_h FROM TABLE <source>-t_log_header.
+    IF sy-subrc = 0.
+      MODIFY zfava_log_d FROM TABLE <source>-t_log_detail.
+      IF sy-subrc = 0.
+        COMMIT WORK AND WAIT.
+      ELSE.
+        ROLLBACK WORK.
+      ENDIF.
+    ELSE.
+      ROLLBACK WORK.
+
+    ENDIF.
+
+    result = NEW ty_source(  ).
+    ASSIGN result->* TO <result>.
+    <result> = <source>.
+
+
+  ENDMETHOD.
+
+  METHOD zif_repository~read.
+
+    FIELD-SYMBOLS <session> TYPE zz_session.
+    FIELD-SYMBOLS <sessions> TYPE ty_t_session_range.
+    FIELD-SYMBOLS <select_rpt> TYPE ty_rpt.
+    FIELD-SYMBOLS <result> TYPE ty_source.
+    DATA lt_header TYPE ty_source-t_log_header.
+    DATA lt_detail TYPE ty_source-t_log_detail.
+    DATA lt_session_range TYPE ty_t_session_range.
+*    ASSIGN im_data TO <session>.
+
+
+*    IF <session> IS ASSIGNED.
+*      SELECT *
+*      FROM zfava_log_h
+*      WHERE zsession = @<session>
+*      INTO TABLE @lt_header.
+*
+*
+*      SELECT *
+*      FROM zfava_log_d
+*      WHERE zsession = @<session>
+*      INTO TABLE @lt_detail.
+*
+*
+*    ENDIF.
+*
+*    result = NEW ty_source(
+*        t_log_header = lt_header
+*        t_log_detail = lt_detail
+*    ).
+    result = NEW ty_source(  ).
+    ASSIGN result->* TO <result>.
+
+    DATA(lo_typedesc) = cl_abap_typedescr=>describe_by_data( im_data ).
+    IF lo_typedesc->kind = 'E'.
+      ASSIGN im_data TO <session>.
+      lt_session_range = VALUE #( ( sign = 'I'
+                                    option = 'EQ'
+                                    low = <session> ) ).
+      <result> = read_by_session( lt_session_range ).
+    ELSEIF lo_typedesc->kind = 'T'.
+      ASSIGN im_data TO <sessions>.
+      <result> = read_by_session( <sessions> ).
+
+    ELSE.
+      ASSIGN im_data TO <select_rpt>.
+      <result> = read_by_ava_rpt( <select_rpt> ).
+
+    ENDIF.
+
+
+
+  ENDMETHOD.
+
+  METHOD read_by_session.
+
+    SELECT *
+    FROM zfava_log_h
+    WHERE zsession IN @im_t_session_range
+    INTO TABLE @result-t_log_header.
+
+    SELECT *
+    FROM zfava_log_d
+    WHERE zsession IN @im_t_session_range
+    INTO TABLE @result-t_log_detail.
+
+  ENDMETHOD.
+
+  METHOD read_by_ava_rpt.
+
+    SELECT *
+    FROM zfava_log_h
+    WHERE zsession IN @im_select_rpt-t_session_range
+      AND bukrs IN @im_select_rpt-t_compcode_range
+      AND belnr IN @im_select_rpt-t_docnum_range
+      AND budat IN @im_select_rpt-t_postdate_range
+    INTO TABLE @result-t_log_header.
+
+    IF lines( result-t_log_header ) > 0.
+
+      SELECT d~*
+      FROM @result-t_log_header AS h
+      INNER JOIN zfava_log_d AS d ON h~zsession = d~zsession
+                                 AND h~proc_user = d~proc_user
+                                 AND h~iffprocdt = d~iffprocdt
+                                 AND h~iffproctm = d~iffproctm
+                                 AND h~zcount = d~zcount
+      INTO TABLE @result-t_log_detail
+      ##db_feature_mode[itabs_in_from_clause] ##itab_db_select.
+
+    ENDIF.
+
+  ENDMETHOD.
+
+ENDCLASS.

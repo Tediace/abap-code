@@ -1,0 +1,29 @@
+CLASS zcl_ava_validated_data_stg DEFINITION
+  PUBLIC
+  FINAL
+  CREATE PUBLIC .
+
+  PUBLIC SECTION.
+  INTERFACES zif_ava_validated_data_stg.
+  METHODS constructor IMPORTING im_data    TYPE zcl_ava_stg_repo=>ty_t_stg
+                                im_t_log_h TYPE zcl_ava_log_repository=>ty_source-t_log_header
+                                im_t_log_d TYPE zcl_ava_log_repository=>ty_source-t_log_detail
+                                im_t_a003  TYPE zif_ava_validated_data_stg=>t_a003_tab.
+
+  PROTECTED SECTION.
+  PRIVATE SECTION.
+ENDCLASS.
+
+
+
+CLASS zcl_ava_validated_data_stg IMPLEMENTATION.
+  METHOD constructor.
+
+   zif_ava_validated_data_stg~it_a003 = im_t_a003.
+   zif_ava_validated_data_stg~it_data = im_data.
+   zif_ava_validated_data_stg~it_log_header = im_t_log_h.
+   zif_ava_validated_data_stg~it_log_detail = im_t_log_d.
+
+  ENDMETHOD.
+
+ENDCLASS.

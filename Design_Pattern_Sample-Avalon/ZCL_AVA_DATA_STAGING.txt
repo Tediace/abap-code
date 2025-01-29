@@ -1,0 +1,25 @@
+CLASS zcl_ava_data_staging DEFINITION
+  PUBLIC
+  FINAL
+  CREATE PUBLIC .
+
+  PUBLIC SECTION.
+  INTERFACES zif_ava_data_stg.
+  METHODS constructor IMPORTING im_data TYPE zcl_ava_stg_repo=>ty_t_stg
+                                im_filepath TYPE rlgrap-filename.
+
+  PROTECTED SECTION.
+  PRIVATE SECTION.
+ENDCLASS.
+
+
+
+CLASS zcl_ava_data_staging IMPLEMENTATION.
+  METHOD constructor.
+
+   zif_ava_data_stg~it_data = im_data.
+   zif_ava_data_stg~iv_filepath = im_filepath.
+
+  ENDMETHOD.
+
+ENDCLASS.

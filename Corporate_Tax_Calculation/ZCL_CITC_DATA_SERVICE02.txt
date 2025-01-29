@@ -1,0 +1,466 @@
+CLASS zcl_citc_data_service02 DEFINITION
+  PUBLIC
+  FINAL
+  CREATE PUBLIC .
+
+  PUBLIC SECTION.
+    INTERFACES zif_citc_data_service.
+    METHODS constructor IMPORTING io_asset_depre_repo TYPE REF TO zif_asset_depre_fisc_c_repo.
+
+  PROTECTED SECTION.
+  PRIVATE SECTION.
+    DATA mo_asset_depre_repo TYPE REF TO zif_asset_depre_fisc_c_repo.
+ENDCLASS.
+
+
+
+CLASS zcl_citc_data_service02 IMPLEMENTATION.
+  METHOD zif_citc_data_service~generate_data.
+
+    DATA gl_acc_range TYPE zif_asset_depre_fisc_c_repo=>ty_t_gl_acc_range.
+    DATA current_year_asset_tax_depre TYPE hslxx12.
+    DATA asset_depre TYPE  zif_asset_depre_fisc_c_repo=>ty_t_currentyear_asset_tax_dep.
+
+    IF source_data IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    SELECT 'I' AS sign,
+           'EQ' AS option,
+           gl_account AS low,
+           CAST( ' ' AS CHAR( 10 ) ) AS high
+    FROM @source_data AS s
+    WHERE formula = @zif_citc_data_service=>cons_formula-depre
+    INTO TABLE @gl_acc_range.
+
+    IF gl_acc_range IS NOT INITIAL.
+      asset_depre = mo_asset_depre_repo->find_source_data(
+                            companycode       = source_data[ 1 ]-companycode
+                            fiscal_year       = source_data[ 1 ]-fiscal_year
+                            gl_accounts_range = gl_acc_range
+                            periods_range     = periods_range ).
+
+    ENDIF.
+
+    LOOP AT source_data INTO DATA(line_source).
+      APPEND INITIAL LINE TO result REFERENCE INTO DATA(line_result).
+      CLEAR current_year_asset_tax_depre.
+
+      line_result->gl_account = line_source-gl_account.
+      line_result->gl_account_description = line_source-gl_account_desc.
+      line_result->currency = line_source-currency.
+      line_result->unaudited_balance = line_source-unaudited_balance.
+      line_result->audited_balance = line_source-unaudited_balance. " initial
+      line_result->is_correction_permanent = line_source-is_permanent.
+      line_result->is_correction_timing = line_source-is_timing.
+      line_result->correction_formula = line_source-formula.
+      ASSIGN asset_depre[
+                 gl_account = line_source-gl_account ]-current_year_asset_tax_depre
+      TO FIELD-SYMBOL(<depre_val>).
+      IF <depre_val> IS ASSIGNED.
+        current_year_asset_tax_depre = <depre_val>.
+      ELSE.
+        current_year_asset_tax_depre = '0'.
+      ENDIF.
+      UNASSIGN <depre_val>.
+      IF line_source-is_permanent = abap_true.
+        line_result->fiscal_correction_permanent =
+                   zif_citc_data_service~calculate_fiscal_correction(
+                            formula                      = line_source-formula
+                            unaudited_bal_after_adj      = line_source-unaudited_balance
+                            current_year_asset_tax_depre = current_year_asset_tax_depre ).
+
+        line_result->fiscal_balance = line_result->audited_balance +
+                                        line_result->fiscal_correction_permanent.
+
+      ELSEIF line_source-is_timing = abap_true.
+        line_result->fiscal_correction_timing =
+                   zif_citc_data_service~calculate_fiscal_correction(
+                            formula                      = line_source-formula
+                            unaudited_bal_after_adj      = line_source-unaudited_balance
+                            current_year_asset_tax_depre = current_year_asset_tax_depre ).
+
+        line_result->fiscal_balance = line_result->audited_balance +
+                                        line_result->fiscal_correction_timing.
+
+      ELSE.
+        line_result->fiscal_balance = line_result->audited_balance.
+
+      ENDIF.
+      line_result->mapping_cit_return_1771_i = line_source-return_1771_i.
+      line_result->mapping_cit_return_1771_ia = line_source-return_1771_ia.
+      line_result->mapping_cit_return_1771_ii = line_source-return_1771_ii.
+
+
+    ENDLOOP.
+
+
+  ENDMETHOD.
+
+  METHOD constructor.
+
+    IF io_asset_depre_repo IS BOUND.
+      mo_asset_depre_repo = io_asset_depre_repo.
+    ELSE.
+      mo_asset_depre_repo = NEW zcl_asset_depre_fisc_c_repo( ).
+    ENDIF.
+
+  ENDMETHOD.
+
+  METHOD zif_citc_data_service~calculate_fiscal_correction.
+    result = COND #(
+                   WHEN formula = zif_citc_data_service=>cons_formula-full
+                   THEN unaudited_bal_after_adj * -1
+                   WHEN formula = zif_citc_data_service=>cons_formula-_50
+                   THEN unaudited_bal_after_adj * '0.5-'
+                   WHEN formula = zif_citc_data_service=>cons_formula-depre
+                   THEN current_year_asset_tax_depre - unaudited_bal_after_adj ).
+  ENDMETHOD.
+
+  METHOD zif_citc_data_service~generate_summarize.
+    DATA source TYPE zif_citc_data_service=>ty_t_data.
+    DATA revenues TYPE zif_citc_data_service=>ty_t_data.
+    DATA cogs TYPE zif_citc_data_service=>ty_t_data.
+    DATA operating_exp TYPE zif_citc_data_service=>ty_t_data.
+    DATA other_income_exp TYPE zif_citc_data_service=>ty_t_data.
+    DATA oci TYPE zif_citc_data_service=>ty_t_data.
+
+    DATA gl_acc_range TYPE zif_asset_depre_fisc_c_repo=>ty_t_gl_acc_range.
+
+    DATA line_total_revenue TYPE zst_citc_report.
+    DATA line_total_cogs TYPE zst_citc_report.
+    DATA line_total_gpl TYPE zst_citc_report.
+    DATA line_total_oe TYPE zst_citc_report.
+    DATA line_total_opl TYPE zst_citc_report.
+    DATA line_total_other_income_exp TYPE zst_citc_report.
+    DATA line_total_net_pl TYPE zst_citc_report.
+    DATA line_total_oci TYPE zst_citc_report.
+    DATA line_total_comprehensive TYPE zst_citc_report.
+
+
+    TYPES: BEGIN OF ty_levels,
+             gl_acc TYPE saknr,
+             level5 TYPE char20,
+           END OF ty_levels,
+
+           ty_t_levels TYPE STANDARD TABLE OF ty_levels WITH EMPTY KEY.
+
+    DATA(levels) = VALUE ty_t_levels(
+     ( gl_acc = '4*' level5 = 'R' )
+     ( gl_acc = '5*' level5 = 'C' )
+     ( gl_acc = '6*' level5 = 'O' )
+     ( gl_acc = '7*' level5 = 'OI' )
+     ( gl_acc = '8*' level5 = 'OC' ) ).
+
+    IF source_data IS INITIAL.
+      RETURN.
+    ENDIF.
+    " currency
+    SELECT SINGLE currency
+    FROM @source_data as s
+    WHERE currency is not initial
+    INTO @DATA(currency).
+
+    LOOP AT levels INTO DATA(line_level).
+
+      gl_acc_range = VALUE #( ( sign = 'I'
+                              option = 'CP'
+                              low = line_level-gl_acc ) ).
+
+      SELECT COUNT( * )
+      FROM @source_data AS s
+      WHERE gl_account IN @gl_acc_range
+      INTO @DATA(counter).
+
+      IF counter > 0.
+
+        SELECT level1,
+            level2,
+            level3,
+            level4,
+            @line_level-level5 AS level5,
+            gl_account,
+            gl_account_description,
+            currency,
+            unaudited_balance,
+            adjustment_debit,
+            adjustment_credit,
+            audited_balance,
+            fiscal_correction_permanent,
+            fiscal_correction_timing,
+            fiscal_balance,
+            remarks,
+            mapping_cit_return_1771_ia,
+            mapping_cit_return_1771_i ,
+            mapping_cit_return_1771_ii,
+            is_correction_permanent,
+            is_correction_timing,
+            correction_formula
+        FROM @source_data AS s
+        WHERE gl_account IN @gl_acc_range
+        ORDER BY gl_account ASCENDING
+        INTO TABLE @source
+        ##ITAB_DB_SELECT.
+
+      ENDIF.
+
+      SELECT level5,
+             SUM( unaudited_balance ) AS unaudited_balance,
+             SUM( adjustment_debit ) AS adjustment_debit,
+             SUM( adjustment_credit ) AS adjustment_credit,
+             SUM( audited_balance ) AS audited_balance,
+             SUM( fiscal_correction_permanent ) AS fiscal_correction_permanent,
+             SUM( fiscal_correction_timing ) AS fiscal_correction_timing,
+             SUM( fiscal_balance ) AS fiscal_balance
+      FROM @source AS r
+      GROUP BY level5
+      INTO TABLE @DATA(total_source)
+      ##ITAB_DB_SELECT.
+
+      ASSIGN total_source[ 1 ] TO FIELD-SYMBOL(<line_total_source>).
+
+
+      CASE line_level-gl_acc.
+        WHEN '4*'.
+          line_total_revenue-level5 = 'REVENUE'.
+          line_total_revenue-gl_account = 'REVENUE'.
+          line_total_revenue-gl_account_description = 'Total Revenue'.
+          line_total_revenue-currency = currency.
+
+          IF <line_total_source> IS ASSIGNED.
+            line_total_revenue-unaudited_balance = <line_total_source>-unaudited_balance.
+            line_total_revenue-adjustment_debit = <line_total_source>-adjustment_debit.
+            line_total_revenue-adjustment_credit = <line_total_source>-adjustment_credit.
+            line_total_revenue-audited_balance = <line_total_source>-audited_balance.
+            line_total_revenue-fiscal_correction_permanent =
+                <line_total_source>-fiscal_correction_permanent.
+            line_total_revenue-fiscal_correction_timing =
+                <line_total_source>-fiscal_correction_timing.
+            line_total_revenue-fiscal_balance = <line_total_source>-fiscal_balance.
+
+          ELSE.
+            line_total_revenue-unaudited_balance = '0'.
+            line_total_revenue-adjustment_debit = '0'.
+            line_total_revenue-adjustment_credit = '0'.
+            line_total_revenue-audited_balance = '0'.
+            line_total_revenue-fiscal_correction_permanent = '0'.
+            line_total_revenue-fiscal_correction_timing = '0'.
+            line_total_revenue-fiscal_balance = '0'.
+
+          ENDIF.
+          APPEND LINES OF source TO result.
+          APPEND line_total_revenue TO result.
+
+        WHEN '5*'.
+          line_total_cogs-level5 = 'COGS'.
+          line_total_cogs-gl_account = 'COGS'.
+          line_total_cogs-gl_account_description = 'Total COGS'.
+          line_total_cogs-currency = currency.
+
+          IF <line_total_source> IS ASSIGNED.
+            line_total_cogs-unaudited_balance = <line_total_source>-unaudited_balance.
+            line_total_cogs-adjustment_debit = <line_total_source>-adjustment_debit.
+            line_total_cogs-adjustment_credit = <line_total_source>-adjustment_credit.
+            line_total_cogs-audited_balance = <line_total_source>-audited_balance.
+            line_total_cogs-fiscal_correction_permanent =
+                <line_total_source>-fiscal_correction_permanent.
+            line_total_cogs-fiscal_correction_timing = <line_total_source>-fiscal_correction_timing.
+            line_total_cogs-fiscal_balance = <line_total_source>-fiscal_balance.
+
+          ELSE.
+            line_total_cogs-unaudited_balance = '0'.
+            line_total_cogs-adjustment_debit = '0'.
+            line_total_cogs-adjustment_credit = '0'.
+            line_total_cogs-audited_balance = '0'.
+            line_total_cogs-fiscal_correction_permanent = '0'.
+            line_total_cogs-fiscal_correction_timing = '0'.
+            line_total_cogs-fiscal_balance = '0'.
+
+          ENDIF.
+
+          APPEND LINES OF source TO result.
+          APPEND line_total_cogs TO result.
+          line_total_gpl = VALUE #(
+               level5 = 'GPL'
+               gl_account = 'GPL'
+               gl_account_description = 'Total Gross P/L'
+               currency = currency
+               unaudited_balance = line_total_revenue-unaudited_balance +
+                                    line_total_cogs-unaudited_balance
+               adjustment_debit = line_total_revenue-adjustment_debit +
+                                   line_total_cogs-adjustment_debit
+               adjustment_credit = line_total_revenue-adjustment_credit +
+                                    line_total_cogs-adjustment_credit
+               audited_balance = line_total_revenue-audited_balance +
+                                  line_total_cogs-audited_balance
+               fiscal_correction_permanent = line_total_revenue-fiscal_correction_permanent +
+                                              line_total_cogs-fiscal_correction_permanent
+               fiscal_correction_timing = line_total_revenue-fiscal_correction_timing +
+                                           line_total_cogs-fiscal_correction_timing
+               fiscal_balance = line_total_revenue-fiscal_balance +
+                                 line_total_cogs-fiscal_balance ).
+          APPEND line_total_gpl TO result.
+
+        WHEN '6*'.
+          line_total_oe-level5 = 'OPERATING_EXP'.
+          line_total_oe-gl_account = 'OPEX'.
+          line_total_oe-gl_account_description = 'Total Operating Expense'.
+          line_total_oe-currency = currency.
+
+          IF <line_total_source> IS ASSIGNED.
+            line_total_oe-unaudited_balance = <line_total_source>-unaudited_balance.
+            line_total_oe-adjustment_debit = <line_total_source>-adjustment_debit.
+            line_total_oe-adjustment_credit = <line_total_source>-adjustment_credit.
+            line_total_oe-audited_balance = <line_total_source>-audited_balance.
+            line_total_oe-fiscal_correction_permanent =
+                <line_total_source>-fiscal_correction_permanent.
+            line_total_oe-fiscal_correction_timing = <line_total_source>-fiscal_correction_timing.
+            line_total_oe-fiscal_balance = <line_total_source>-fiscal_balance.
+
+          ELSE.
+            line_total_oe-unaudited_balance = '0'.
+            line_total_oe-adjustment_debit = '0'.
+            line_total_oe-adjustment_credit = '0'.
+            line_total_oe-audited_balance = '0'.
+            line_total_oe-fiscal_correction_permanent = '0'.
+            line_total_oe-fiscal_correction_timing = '0'.
+            line_total_oe-fiscal_balance = '0'.
+
+          ENDIF.
+
+          APPEND LINES OF source TO result.
+          APPEND line_total_oe TO result.
+
+          line_total_opl = VALUE #(
+               level5 = 'OPL'
+               gl_account = 'OPL'
+               gl_account_description = 'Total Operating Profit/ Loss'
+               currency = currency
+               unaudited_balance = line_total_oe-unaudited_balance +
+                                    line_total_gpl-unaudited_balance
+               adjustment_debit = line_total_oe-adjustment_debit +
+                                   line_total_gpl-adjustment_debit
+               adjustment_credit = line_total_oe-adjustment_credit +
+                                    line_total_gpl-adjustment_credit
+               audited_balance = line_total_oe-audited_balance +
+                                  line_total_gpl-audited_balance
+               fiscal_correction_permanent = line_total_oe-fiscal_correction_permanent +
+                                              line_total_gpl-fiscal_correction_permanent
+               fiscal_correction_timing = line_total_oe-fiscal_correction_timing +
+                                           line_total_gpl-fiscal_correction_timing
+               fiscal_balance = line_total_oe-fiscal_balance +
+                                 line_total_gpl-fiscal_balance ).
+          APPEND line_total_opl TO result.
+
+        WHEN '7*'.
+          line_total_other_income_exp-level5 = 'OIE'.
+          line_total_other_income_exp-gl_account = 'OIE'.
+          line_total_other_income_exp-gl_account_description = 'Total Other Income Expense'.
+          line_total_other_income_exp-currency = currency.
+          IF <line_total_source> IS ASSIGNED.
+            line_total_other_income_exp-unaudited_balance = <line_total_source>-unaudited_balance.
+            line_total_other_income_exp-adjustment_debit = <line_total_source>-adjustment_debit.
+            line_total_other_income_exp-adjustment_credit = <line_total_source>-adjustment_credit.
+            line_total_other_income_exp-audited_balance = <line_total_source>-audited_balance.
+            line_total_other_income_exp-fiscal_correction_permanent =
+                <line_total_source>-fiscal_correction_permanent.
+            line_total_other_income_exp-fiscal_correction_timing =
+                <line_total_source>-fiscal_correction_timing.
+            line_total_other_income_exp-fiscal_balance = <line_total_source>-fiscal_balance.
+
+          ELSE.
+            line_total_other_income_exp-unaudited_balance = '0'.
+            line_total_other_income_exp-adjustment_debit = '0'.
+            line_total_other_income_exp-adjustment_credit = '0'.
+            line_total_other_income_exp-audited_balance = '0'.
+            line_total_other_income_exp-fiscal_correction_permanent = '0'.
+            line_total_other_income_exp-fiscal_correction_timing = '0'.
+            line_total_other_income_exp-fiscal_balance = '0'.
+
+          ENDIF.
+
+          APPEND LINES OF source TO result.
+          APPEND line_total_other_income_exp TO result.
+
+          line_total_net_pl = VALUE #(
+               level5 = 'NPL'
+               gl_account = 'NPL'
+               gl_account_description = 'Total Net Profit/ Loss'
+               currency = currency
+               unaudited_balance = line_total_other_income_exp-unaudited_balance +
+                                    line_total_opl-unaudited_balance
+               adjustment_debit = line_total_other_income_exp-adjustment_debit +
+                                   line_total_opl-adjustment_debit
+               adjustment_credit = line_total_other_income_exp-adjustment_credit +
+                                    line_total_opl-adjustment_credit
+               audited_balance = line_total_other_income_exp-audited_balance +
+                                  line_total_opl-audited_balance
+               fiscal_correction_permanent = line_total_other_income_exp-fiscal_correction_permanent +
+                                              line_total_opl-fiscal_correction_permanent
+               fiscal_correction_timing = line_total_other_income_exp-fiscal_correction_timing +
+                                           line_total_opl-fiscal_correction_timing
+               fiscal_balance = line_total_other_income_exp-fiscal_balance +
+                                 line_total_opl-fiscal_balance ).
+          APPEND line_total_net_pl TO result.
+
+        WHEN '8*'.
+          line_total_oci-level5 = 'OCI'.
+          line_total_oci-gl_account = 'OCI'.
+          line_total_oci-gl_account_description = 'Total OCI'.
+          line_total_oci-currency = currency.
+
+          IF <line_total_source> IS ASSIGNED.
+            line_total_oci-unaudited_balance = <line_total_source>-unaudited_balance.
+            line_total_oci-adjustment_debit = <line_total_source>-adjustment_debit.
+            line_total_oci-adjustment_credit = <line_total_source>-adjustment_credit.
+            line_total_oci-audited_balance = <line_total_source>-audited_balance.
+            line_total_oci-fiscal_correction_permanent =
+                <line_total_source>-fiscal_correction_permanent.
+            line_total_oci-fiscal_correction_timing = <line_total_source>-fiscal_correction_timing.
+            line_total_oci-fiscal_balance = <line_total_source>-fiscal_balance.
+
+          ELSE.
+            line_total_oci-unaudited_balance = '0'.
+            line_total_oci-adjustment_debit = '0'.
+            line_total_oci-adjustment_credit = '0'.
+            line_total_oci-audited_balance = '0'.
+            line_total_oci-fiscal_correction_permanent = '0'.
+            line_total_oci-fiscal_correction_timing = '0'.
+            line_total_oci-fiscal_balance = '0'.
+
+          ENDIF.
+
+          APPEND LINES OF source TO result.
+          APPEND line_total_oci TO result.
+
+          line_total_comprehensive = VALUE #(
+               level5 = 'COMPREHENSIVE'
+               gl_account = 'COMPRE'
+               gl_account_description = 'Total Comprehensive Income/ Loss'
+               currency = currency
+               unaudited_balance = line_total_oci-unaudited_balance +
+                                    line_total_net_pl-unaudited_balance
+               adjustment_debit = line_total_oci-adjustment_debit +
+                                   line_total_net_pl-adjustment_debit
+               adjustment_credit = line_total_oci-adjustment_credit +
+                                    line_total_net_pl-adjustment_credit
+               audited_balance = line_total_oci-audited_balance +
+                                  line_total_net_pl-audited_balance
+               fiscal_correction_permanent = line_total_oci-fiscal_correction_permanent +
+                                              line_total_net_pl-fiscal_correction_permanent
+               fiscal_correction_timing = line_total_oci-fiscal_correction_timing +
+                                           line_total_net_pl-fiscal_correction_timing
+               fiscal_balance = line_total_oci-fiscal_balance +
+                                 line_total_net_pl-fiscal_balance ).
+          APPEND line_total_comprehensive TO result.
+
+
+      ENDCASE.
+
+      CLEAR: source, total_source.
+      UNASSIGN: <line_total_source>.
+    ENDLOOP.
+
+  ENDMETHOD.
+
+ENDCLASS.

@@ -1,0 +1,2756 @@
+*----------------------------------------------------------------------
+* Confidential and Proprietary
+* SAP Implementation and Application Support GOJEK Indonesia
+*----------------------------------------------------------------------
+* PROGRAM DESCRIPTION:
+* Avalon Journal Posting
+
+*----------------------------------------------------------------------
+*  MODIFICATION LOG:
+*--------------------------------------------------------------------*
+* CHANGE ON       CHANGE BY                     CHANGE NO
+* 20.09.2022      RADENP                    GD1K919945/GD1K919946
+*                                           Initial
+*
+*----------------------------------------------------------------------
+REPORT zfi_avalon_journal_post.
+
+*----------------------------------------------------------------------*
+* T A B L E S
+*----------------------------------------------------------------------*
+TABLES:
+  sscrfields,
+  zfava_log_h
+  .
+
+
+*----------------------------------------------------------------------*
+* T Y P E S
+*----------------------------------------------------------------------*
+TYPE-POOLS:
+  abap.         "ABAP Language Type-Pool
+
+
+TYPES: BEGIN OF t_upload,   "Upload Tables
+         count     TYPE i,
+         eline     TYPE i,
+         buzei     TYPE bseg-buzei,
+         bukrs     TYPE bseg-bukrs,
+         bldat     TYPE bkpf-bldat,
+         budat     TYPE bkpf-budat,
+         xblnr     TYPE bkpf-xblnr,
+         bktxt     TYPE bkpf-bktxt,
+         blart     TYPE bkpf-blart,
+         waers     TYPE bkpf-waers,
+         umskz     TYPE bseg-umskz,
+         hkont     TYPE bseg-hkont,
+         kunnr     TYPE bseg-kunnr,
+         lifnr     TYPE bseg-lifnr,
+         mwskz     TYPE bseg-mwskz,
+         fwbas     TYPE bapiaccr09-amt_doccur,
+         wrbtr     TYPE bapiaccr09-amt_doccur,
+         dmbtr     TYPE bapiaccr09-amt_doccur,
+         valut     TYPE bseg-valut,
+         zuonr     TYPE bseg-zuonr,
+         vbund     TYPE bseg-vbund,
+         kostl     TYPE bseg-kostl,
+         aufnr     TYPE bseg-aufnr,
+         werks     TYPE bseg-werks,
+         prctr     TYPE bseg-prctr,
+         sgtxt     TYPE bseg-sgtxt,
+         zterm     TYPE bseg-zterm,
+         zfbdt     TYPE bseg-zfbdt,
+         zlsch     TYPE bseg-zlsch,
+         xref1     TYPE bseg-xref1,
+         posid     TYPE prps-posid,
+         matnr     TYPE mara-matnr,
+         bupla     TYPE bseg-bupla,
+         bcode     TYPE bcode,
+         long_text TYPE zz_char255,
+         xref2     TYPE bseg-xref2,
+       END OF t_upload,
+
+
+       BEGIN OF t_zfpost,
+         bukrs              TYPE zfpost_attrb-bukrs,
+         gl_pattern         TYPE zfpost_attrb-gl_pattern,
+         zoption            TYPE zfpost_attrb-zoption,
+         mwskz              TYPE zfpost_attrb-mwskz,
+         zz_prctrx          TYPE zfpost_attrb-zz_prctrx,
+         zz_kostlx          TYPE zfpost_attrb-zz_kostlx,
+         zz_profit_segmentx TYPE zfpost_attrb-zz_profit_segmentx,
+       END OF t_zfpost,
+
+       BEGIN OF t_report,  "Report Tables
+         count   TYPE i,
+         eline   TYPE i,
+         bukrs   TYPE bseg-bukrs,
+         bldat   TYPE bkpf-bldat,
+         budat   TYPE bkpf-budat,
+         xblnr   TYPE bkpf-xblnr,
+         bktxt   TYPE bkpf-bktxt,
+         blart   TYPE bkpf-blart,
+         waers   TYPE bkpf-waers,
+         belnr   TYPE bkpf-belnr,
+         type    TYPE bapiret2-type,
+         message TYPE bapiret2-message,
+       END OF t_report,
+
+       BEGIN OF t_tax_sum,
+         bukrs   TYPE bkpf-bukrs,
+         mwskz   TYPE bseg-mwskz,
+         waers   TYPE bkpf-waers,
+         tax_amt TYPE bapitaxamt,
+         wrbtr   TYPE bseg-wrbtr,
+         wmwst   TYPE rtax1u15-wmwst,
+         fwbas   TYPE bseg-fwbas,
+       END OF t_tax_sum.
+
+TYPES:
+  t_upload_tab    TYPE STANDARD TABLE OF t_upload WITH EMPTY KEY,
+  t_zfpost_tab    TYPE STANDARD TABLE OF t_zfpost WITH EMPTY KEY,
+  t_report_tab    TYPE STANDARD TABLE OF t_report WITH EMPTY KEY,
+  t_tax_sum_tab   TYPE STANDARD TABLE OF t_tax_sum WITH EMPTY KEY,
+  t_log_h_tab     TYPE STANDARD TABLE OF zfmj_log_h WITH EMPTY KEY,
+  t_log_d_tab     TYPE STANDARD TABLE OF zfmj_log_d WITH EMPTY KEY,
+  t_setleaf_tab   TYPE STANDARD TABLE OF setleaf WITH EMPTY KEY,
+  t_zftaxinv_tab  TYPE STANDARD TABLE OF zftaxinv_range WITH EMPTY KEY,
+  t_zftaxcode_tab TYPE STANDARD TABLE OF zftaxcode_map WITH EMPTY KEY,
+  r_waers         TYPE RANGE OF waers.
+
+*----------------------------------------------------------------------*
+* L O C A L  C L A S S E S / I N T E R F A C E S
+*----------------------------------------------------------------------*
+CLASS lcl_posting_repo DEFINITION
+ CREATE PUBLIC
+ INHERITING FROM zcl_repository_abstract.
+
+  PUBLIC SECTION.
+    TYPES: BEGIN OF ty_bapi_doc_post,
+             execute         TYPE abap_bool,
+             document_header TYPE bapiache09,
+             t_accountgl     TYPE STANDARD TABLE OF bapiacgl09 WITH EMPTY KEY,
+             t_payable       TYPE STANDARD TABLE OF bapiacap09 WITH EMPTY KEY,
+             t_receivable    TYPE STANDARD TABLE OF bapiacar09 WITH EMPTY KEY,
+             t_tax           TYPE STANDARD TABLE OF bapiactx09 WITH EMPTY KEY,
+             t_currency      TYPE STANDARD TABLE OF bapiaccr09 WITH EMPTY KEY,
+             t_criteria      TYPE STANDARD TABLE OF bapiackec9 WITH EMPTY KEY,
+             t_return        TYPE STANDARD TABLE OF bapiret2 WITH EMPTY KEY,
+             t_return_post   TYPE STANDARD TABLE OF bapiret2 WITH EMPTY KEY,
+             t_rtax1u15      TYPE STANDARD TABLE OF rtax1u15 WITH EMPTY KEY,
+             t_extension     TYPE STANDARD TABLE OF bapiacextc WITH EMPTY KEY,
+             t_extension2    TYPE bapiparex_tab_ac, "STANDARD TABLE OF bapiparex WITH EMPTY KEY,
+             t_tdline        TYPE STANDARD TABLE OF tline WITH EMPTY KEY,
+             t_log_header    TYPE zcl_ava_log_repository=>ty_source-t_log_header,
+             t_log_detail    TYPE zcl_ava_log_repository=>ty_source-t_log_detail,
+             t_data_detail   TYPE zcl_ava_stg_repo=>ty_t_stg,
+           END OF ty_bapi_doc_post
+
+*           BEGIN OF ty_return_post,
+*             t_log_header TYPE lif_validated_stg=>ty_t_log_h,
+*             t_log_detail TYPE lif_validated_stg=>ty_t_log_d,
+*           END OF ty_return_post
+           .
+
+    METHODS zif_repository~create_by_ref REDEFINITION.
+
+
+  PROTECTED SECTION.
+  PRIVATE SECTION.
+    CONSTANTS: c_message_s TYPE c VALUE 'S',
+               c_message_e TYPE c VALUE 'E'.
+
+ENDCLASS.
+
+CLASS lcl_posting_repo IMPLEMENTATION.
+
+
+  METHOD zif_repository~create_by_ref.
+    CONSTANTS : lc_doc_itm  TYPE tdobject VALUE 'DOC_ITEM',
+                lc_txt_id   TYPE tdid VALUE '0001',
+                lc_language TYPE spras VALUE 'E',
+                lc_mwskz_a0 TYPE bseg-mwskz VALUE 'A0'.
+
+
+    DATA li_return TYPE STANDARD TABLE OF bapiret2 WITH EMPTY KEY.
+    DATA li_return_post TYPE STANDARD TABLE OF bapiret2 WITH EMPTY KEY.
+    DATA li_tdline TYPE STANDARD TABLE OF tline WITH EMPTY KEY.
+    DATA lwa_hdr_long_text  TYPE thead.
+*    DATA lwa_log_h TYPE zfava_log_h.
+    DATA lv_message TYPE bapi_msg.
+    DATA lv_type TYPE bapi_mtype.
+    DATA: lv_objtype TYPE awtyp,
+          lv_objkey  TYPE awkey,
+          lv_objsys  TYPE awsys.
+
+    FIELD-SYMBOLS <source> TYPE ty_bapi_doc_post.
+    ASSIGN im_data->* TO <source>.
+
+    FIELD-SYMBOLS <result> TYPE zcl_ava_log_repository=>ty_source.
+
+    "Check Document
+    CALL FUNCTION 'BAPI_ACC_DOCUMENT_CHECK'
+      EXPORTING
+        documentheader    = <source>-document_header
+      TABLES
+        accountgl         = <source>-t_accountgl
+        accountreceivable = <source>-t_receivable
+        accountpayable    = <source>-t_payable
+        accounttax        = <source>-t_tax
+        currencyamount    = <source>-t_currency
+        criteria          = <source>-t_criteria
+        extension1        = <source>-t_extension
+        extension2        = <source>-t_extension2
+        return            = li_return.
+
+    READ TABLE li_return TRANSPORTING NO FIELDS WITH KEY type = c_message_e.
+    IF sy-subrc = 0.
+      LOOP AT li_return INTO DATA(lwa_return) WHERE type = c_message_e.
+        CONCATENATE lv_message lwa_return-message INTO lv_message SEPARATED BY space.
+      ENDLOOP.
+      lv_type = c_message_e.
+    ELSE.
+      lv_type = c_message_s.
+    ENDIF.
+
+    IF <source>-execute = abap_true.
+      READ TABLE li_return TRANSPORTING NO FIELDS WITH KEY type = c_message_e.
+      IF sy-subrc NE 0.
+        CALL FUNCTION 'BAPI_ACC_DOCUMENT_POST'
+          EXPORTING
+            documentheader    = <source>-document_header
+          IMPORTING
+            obj_type          = lv_objtype
+            obj_key           = lv_objkey
+            obj_sys           = lv_objsys
+          TABLES
+            accountgl         = <source>-t_accountgl
+            accountreceivable = <source>-t_receivable
+            accountpayable    = <source>-t_payable
+            accounttax        = <source>-t_tax
+            currencyamount    = <source>-t_currency
+            criteria          = <source>-t_criteria
+            extension1        = <source>-t_extension
+            extension2        = <source>-t_extension2
+            return            = li_return_post.
+
+        READ TABLE li_return_post TRANSPORTING NO FIELDS WITH KEY type = c_message_e.
+        IF sy-subrc = 0.
+          LOOP AT li_return_post INTO DATA(lwa_return_post) WHERE type = c_message_e.
+            CONCATENATE lv_message lwa_return_post-message INTO lv_message SEPARATED BY space.
+          ENDLOOP.
+          lv_type = c_message_e.
+        ELSE.
+          CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+            EXPORTING
+              wait = 'X'.
+
+          lv_type = c_message_s.
+
+          " Start of add by Triadi at 16.03.2021 GD1K915520
+          " Set Long Text after document number is created
+          LOOP AT <source>-t_data_detail INTO DATA(lwa_detail) WHERE long_text IS NOT INITIAL.
+
+            READ TABLE li_return_post INTO lwa_return_post INDEX 1.
+            IF sy-subrc = 0.
+              lwa_hdr_long_text-tdname = <source>-document_header-comp_code && lwa_return_post-message_v2(10) &&
+                                         lwa_return_post-message_v2+14(4) && lwa_detail-buzei.
+            ENDIF.
+
+            lwa_hdr_long_text-tdobject = lc_doc_itm.
+            lwa_hdr_long_text-tdid = lc_txt_id.
+            lwa_hdr_long_text-tdspras = lc_language.
+
+            "Set Long Text
+            li_tdline = VALUE #( BASE li_tdline ( tdline = lwa_detail-long_text ) ).
+
+
+            CALL FUNCTION 'SAVE_TEXT'
+              EXPORTING
+                client          = sy-mandt
+                header          = lwa_hdr_long_text
+                savemode_direct = abap_true
+              TABLES
+                lines           = li_tdline.
+
+
+            CLEAR : lwa_hdr_long_text, lwa_detail.
+            CLEAR li_tdline.
+          ENDLOOP.
+
+        ENDIF.
+
+*        lwa_log_h-belnr    = lv_objkey(10).
+
+      ENDIF.
+    ENDIF.
+
+    result = NEW zcl_ava_log_repository=>ty_source(  ).
+    ASSIGN result->* TO <result>.
+
+    ASSIGN <source>-t_log_header[ 1 ] TO FIELD-SYMBOL(<log_header>).
+    IF <log_header> IS ASSIGNED.
+
+      "Populate header log
+      <result>-t_log_header = VALUE #( (
+      zsession  = <log_header>-zsession
+      proc_user = sy-uname
+      iffprocdt = sy-datum
+      iffproctm = sy-uzeit
+      zcount    = <log_header>-zcount
+      zeline    = <log_header>-zeline
+      zpath     = <log_header>-zpath
+      bukrs     = <source>-document_header-comp_code
+      belnr     = lv_objkey(10)
+      bldat     = <source>-document_header-doc_date
+      budat     = <source>-document_header-pstng_date
+      xblnr     = <source>-document_header-ref_doc_no
+      bktxt     = <source>-document_header-header_txt
+      blart     = <source>-document_header-doc_type
+      waers     = <log_header>-waers
+      type      = lv_type
+      message   = |{ <log_header>-message } { lv_message }| ) ).
+
+
+    ENDIF.
+
+    LOOP AT <source>-t_log_detail ASSIGNING FIELD-SYMBOL(<log_detail>).
+      APPEND INITIAL LINE TO <result>-t_log_detail ASSIGNING FIELD-SYMBOL(<log_d_result>).
+      <log_d_result> = CORRESPONDING #( <log_detail> ).
+      <log_d_result>-type = lv_type.
+      <log_d_result>-message = |{ <log_detail>-message } { lv_message }|.
+
+    ENDLOOP.
+
+
+  ENDMETHOD.
+
+ENDCLASS.
+
+CLASS lcl_posting_data_service DEFINITION
+ CREATE PUBLIC
+ INHERITING FROM zcl_data_service_abstract.
+
+  PUBLIC SECTION.
+    TYPES: BEGIN OF ty_source_data,
+             t_data  TYPE zcl_ava_stg_repo=>ty_t_stg,
+*           t_log_header TYPE lif_validated_stg=>ty_t_log_h,
+*           t_log_detail TYPE lif_validated_stg=>ty_t_log_d,
+             t_a003  TYPE zif_ava_validated_data_stg=>t_a003_tab,
+             execute TYPE abap_bool,
+             tax_inv TYPE abap_bool,
+             path    TYPE rlgrap-filename,
+           END OF ty_source_data.
+
+    METHODS zif_data_service~generate_by_obj REDEFINITION.
+    METHODS zif_data_service~generate_data REDEFINITION.
+  PROTECTED SECTION.
+  PRIVATE SECTION.
+    TYPES: BEGIN OF ty_tax_curr,
+             t_tax      TYPE STANDARD TABLE OF bapiactx09 WITH EMPTY KEY,
+             t_currency TYPE STANDARD TABLE OF bapiaccr09 WITH EMPTY KEY,
+           END OF ty_tax_curr.
+
+    DATA mo_setleaf_repo TYPE REF TO zif_repository.
+    CONSTANTS: c_blart_dr        TYPE bkpf-blart VALUE 'DR',
+               c_message_e       TYPE c VALUE 'E',
+               c_bus_act_rfbu    TYPE glvor VALUE 'RFBU',
+               c_curr_type_00(2) TYPE c VALUE '00',
+               c_werks(5)        TYPE c VALUE 'WERKS'.
+
+    CONSTANTS: BEGIN OF c_waers,
+                 c_waers_idr TYPE waers VALUE 'IDR',
+                 c_waers_vnd TYPE waers VALUE 'VND',
+                 c_waers_jpy TYPE waers VALUE 'JPY',
+               END OF c_waers.
+
+    METHODS adjust_tax
+      IMPORTING
+        im_execute  TYPE abap_bool
+        im_t_upload TYPE zcl_ava_stg_repo=>ty_t_stg
+        im_upload   TYPE zfava_post_stg
+      EXPORTING
+        ex_message  TYPE bapiret2-message
+        ex_mtype    TYPE bapi_mtype
+        ex_xblnr    TYPE xblnr1.
+
+    METHODS populate_tax_line
+      IMPORTING
+                im_t_tax_sum      TYPE t_tax_sum_tab
+                im_t_a003         TYPE zif_ava_validated_data_stg=>t_a003_tab
+                im_documentheader TYPE bapiache09
+                im_waers          TYPE waers
+                im_r_round_curr   TYPE r_waers
+      RETURNING VALUE(result)     TYPE ty_tax_curr.
+    METHODS get_rounded_tax_curr
+      RETURNING
+        VALUE(result) TYPE r_waers.
+
+ENDCLASS.
+
+CLASS lcl_posting_data_service IMPLEMENTATION.
+
+  METHOD zif_data_service~generate_by_obj.
+
+
+  ENDMETHOD.
+
+  METHOD zif_data_service~generate_data.
+
+    FIELD-SYMBOLS <source> TYPE ty_source_data.
+    FIELD-SYMBOLS <result> TYPE lcl_posting_repo=>ty_bapi_doc_post.
+
+    DATA: li_accountgl       TYPE STANDARD TABLE OF bapiacgl09,
+          li_payable         TYPE STANDARD TABLE OF bapiacap09,
+          li_receivable      TYPE STANDARD TABLE OF bapiacar09,
+          li_tax             TYPE STANDARD TABLE OF bapiactx09,
+          li_currency        TYPE STANDARD TABLE OF bapiaccr09,
+          li_criteria        TYPE STANDARD TABLE OF bapiackec9,
+          li_return          TYPE STANDARD TABLE OF bapiret2,
+          li_return_post     TYPE STANDARD TABLE OF bapiret2,
+          li_rtax1u15        TYPE STANDARD TABLE OF rtax1u15,
+          li_extension       TYPE STANDARD TABLE OF bapiacextc,
+          li_extension2      TYPE STANDARD TABLE OF bapiparex,
+          li_tdline          TYPE STANDARD TABLE OF tline,
+          li_tax_sum         TYPE t_tax_sum_tab,
+          li_detail          TYPE zcl_ava_stg_repo=>ty_t_stg,
+          li_zftaxinv        TYPE t_zftaxinv_tab,
+          li_tax_refkey      TYPE ztinvoice_gen_detail,
+
+          lwa_upload         TYPE zfava_post_stg,
+          lwa_log_h          TYPE zfava_log_h,
+          lwa_log_d          TYPE zfava_log_d,
+          lwa_accountgl      TYPE bapiacgl09,
+          lwa_payable        TYPE bapiacap09,
+          lwa_receivable     TYPE bapiacar09,
+          lwa_tax            TYPE bapiactx09,
+          lwa_currency       TYPE bapiaccr09,
+          lwa_criteria       TYPE bapiackec9,
+          lwa_documentheader TYPE bapiache09,
+          lwa_return         TYPE bapiret2,
+          lwa_return_post    TYPE bapiret2,
+          lwa_rtax1u15       TYPE rtax1u15,
+          lwa_extension      TYPE bapiacextc,
+          lwa_extension2     TYPE bapiparex,
+          lwa_tax_sum        TYPE t_tax_sum,
+          lwa_detail         TYPE zfava_post_stg,
+          lwa_a003           TYPE zif_ava_validated_data_stg=>t_a003,
+          lwa_hdr_long_text  TYPE thead,
+
+          lr_round_curr      TYPE r_waers,
+          lr_bukrs_bcode     TYPE bpc_range_tab,
+
+          lv_line_no         TYPE i,
+          lv_waers           TYPE bkpf-waers,
+          lv_objtype         TYPE bapiache09-obj_type,
+          lv_objkey          TYPE bapiache09-obj_key,
+          lv_objsys          TYPE bapiache09-obj_sys,
+          lv_index           TYPE i,
+          lv_fwste           TYPE bset-fwste,
+          lv_fwste_temp      TYPE i,
+          lv_type            TYPE bapi_mtype,
+          lv_message         TYPE bapiret2-message   ##NEEDED,
+          lv_count           TYPE i          VALUE 0,
+          lv_eline           TYPE i          VALUE 0,
+          lv_need_ps         TYPE abap_bool,
+          lv_fwbas           TYPE bseg-fwbas,
+          lv_valfrom         TYPE setvalmin,
+          lv_tax_testrun     TYPE char1,
+          lv_tax_commit      TYPE abap_bool,
+          lv_tax_msg_type    TYPE char1,
+          lv_mwskz           TYPE bseg-mwskz,
+          lv_xblnr_n         TYPE REF TO data,
+          lv_xblnr_add_seq   TYPE i          VALUE 0.
+
+
+    CONSTANTS : lc_doc_itm  TYPE tdobject VALUE 'DOC_ITEM',
+                lc_txt_id   TYPE tdid VALUE '0001',
+                lc_language TYPE spras VALUE 'E',
+                lc_mwskz_a0 TYPE bseg-mwskz VALUE 'A0'.
+
+    DATA lo_setleaf_repo TYPE REF TO zif_repository.
+
+    IF mo_setleaf_repo IS BOUND.
+      lo_setleaf_repo = mo_setleaf_repo.
+    ELSE.
+      lo_setleaf_repo = NEW zcl_setleaf_repository( ).
+    ENDIF.
+
+    DATA(setleaf) = lo_setleaf_repo->read( CONV setleaf-setname( 'ZFI_BUKRS_BCODE' ) ).
+    ASSIGN setleaf->* TO FIELD-SYMBOL(<setleaf>).
+    lr_bukrs_bcode = <setleaf>.
+
+
+*    DATA li_upload TYPE zcl_ava_post_stg_repo=>ty_t_stg.
+    ASSIGN im_data TO <source>.
+
+*    li_upload = <source>-t_data.
+    SELECT *
+    FROM @<source>-t_data AS data
+    ORDER BY data~buzei ASCENDING
+    INTO TABLE @DATA(li_upload)
+    ##db_feature_mode[itabs_in_from_clause] ##itab_db_select.
+
+
+    LOOP AT li_upload INTO lwa_upload.
+
+      REFRESH:  li_rtax1u15.
+      CLEAR:    lwa_rtax1u15.
+
+      "Check if the line item is header line
+      IF lwa_upload-buzei EQ 0.
+
+        IF lwa_upload-blart EQ c_blart_dr AND <source>-tax_inv EQ abap_true.
+          "manual substitution (zficmp U906) - Generate tax Invoice
+          adjust_tax(
+            EXPORTING
+              im_execute  = <source>-execute
+              im_t_upload = li_upload
+              im_upload   = lwa_upload
+            IMPORTING
+              ex_message  = lv_message
+              ex_mtype    = lv_type
+              ex_xblnr    = DATA(lv_xblnr_tax)
+          ).
+          lwa_upload-xblnr = COND #( WHEN lv_xblnr_tax IS INITIAL
+                                     THEN lwa_upload-xblnr
+                                     ELSE lv_xblnr_tax ).
+        ENDIF.
+
+
+        "Header Data
+        CLEAR lwa_documentheader.
+        lwa_documentheader-comp_code   = lwa_upload-bukrs.
+        lwa_documentheader-doc_date    = lwa_upload-bldat.
+        lwa_documentheader-pstng_date  = lwa_upload-budat.
+        lwa_documentheader-fis_period  = lwa_upload-budat+4(2).
+        lwa_documentheader-fisc_year   = lwa_upload-budat(4).
+        lwa_documentheader-ref_doc_no  = lwa_upload-xblnr.
+        lwa_documentheader-header_txt  = lwa_upload-bktxt.
+        lwa_documentheader-doc_type    = lwa_upload-blart.
+        lwa_documentheader-username    = sy-uname.
+        lwa_documentheader-bus_act     = c_bus_act_rfbu.
+        lv_waers                       = lwa_upload-waers.
+        lv_count                       = lwa_upload-zcount.
+        lv_eline                       = lwa_upload-zeline.
+
+        "Else is document line item
+      ELSE.
+
+        "Temporary store 1 set of line item documents for log table
+        APPEND lwa_upload TO li_detail.
+
+        "Line item number
+        lv_line_no = lv_line_no + 1.
+
+        "Populate Customer line item
+        IF lwa_upload-kunnr IS NOT INITIAL.
+          CLEAR lwa_receivable.
+          lwa_receivable-itemno_acc         = lv_line_no.
+          lwa_receivable-customer           = lwa_upload-kunnr.
+          lwa_receivable-sp_gl_ind          = lwa_upload-umskz.
+          lwa_receivable-tax_code           = lwa_upload-mwskz.
+          lwa_receivable-alloc_nmbr         = lwa_upload-zuonr.
+          lwa_receivable-profit_ctr         = lwa_upload-prctr.
+          lwa_receivable-item_text          = lwa_upload-sgtxt.
+          lwa_receivable-pmnttrms           = lwa_upload-zterm.
+          lwa_receivable-bline_date         = lwa_upload-zfbdt.
+          lwa_receivable-pymt_meth          = lwa_upload-zlsch.
+          lwa_receivable-ref_key_1          = lwa_upload-xref1.
+          lwa_receivable-ref_key_2          = lwa_upload-xref2.
+          lwa_receivable-gl_account         = lwa_upload-hkont.
+
+          IF lwa_documentheader-comp_code IN lr_bukrs_bcode.
+            lwa_receivable-part_businessplace = lwa_upload-bcode.
+          ENDIF.
+
+          APPEND lwa_receivable TO li_receivable.
+
+          "Populate Vendor line item
+        ELSEIF lwa_upload-lifnr IS NOT INITIAL.
+          CLEAR lwa_payable.
+          lwa_payable-itemno_acc         = lv_line_no.
+          lwa_payable-vendor_no          = lwa_upload-lifnr.
+          lwa_payable-sp_gl_ind          = lwa_upload-umskz.
+          lwa_payable-tax_code           = lwa_upload-mwskz.
+          lwa_payable-alloc_nmbr         = lwa_upload-zuonr.
+          lwa_payable-profit_ctr         = lwa_upload-prctr.
+          lwa_payable-item_text          = lwa_upload-sgtxt.
+          lwa_payable-pmnttrms           = lwa_upload-zterm.
+          lwa_payable-bline_date         = lwa_upload-zfbdt.
+          lwa_payable-pymt_meth          = lwa_upload-zlsch.
+          lwa_payable-ref_key_1          = lwa_upload-xref1.
+          lwa_payable-ref_key_2          = lwa_upload-xref2.
+          lwa_payable-gl_account         = lwa_upload-hkont.
+
+          IF lwa_documentheader-comp_code IN lr_bukrs_bcode.
+            lwa_payable-part_businessplace = lwa_upload-bcode.
+          ENDIF.
+
+          APPEND lwa_payable TO li_payable.
+
+          "Populate G/l Account line item
+        ELSEIF lwa_upload-hkont IS NOT INITIAL.
+          CLEAR lwa_accountgl.
+          lwa_accountgl-itemno_acc  = lv_line_no.
+          lwa_accountgl-gl_account  = lwa_upload-hkont.
+          lwa_accountgl-tax_code    = lwa_upload-mwskz.
+          lwa_accountgl-value_date  = lwa_upload-valut.
+          lwa_accountgl-alloc_nmbr  = lwa_upload-zuonr.
+          lwa_accountgl-trade_id    = lwa_upload-vbund.
+          lwa_accountgl-costcenter  = lwa_upload-kostl.
+          lwa_accountgl-orderid     = lwa_upload-aufnr.
+          lwa_accountgl-profit_ctr  = lwa_upload-prctr.
+          lwa_accountgl-item_text   = lwa_upload-sgtxt.
+          lwa_accountgl-ref_key_1   = lwa_upload-xref1.
+          lwa_accountgl-ref_key_2   = lwa_upload-xref2.
+          lwa_accountgl-wbs_element = lwa_upload-posid.
+          lwa_accountgl-material    = lwa_upload-matnr.
+
+
+          "Avoid error 'Taxes by item is activated; consequently, transfer by item is mandatory'
+          IF lwa_documentheader-comp_code CP 'IN*'.
+            lwa_accountgl-itemno_tax = '000001'.
+          ENDIF.
+
+          APPEND lwa_accountgl TO li_accountgl.
+
+          "Populate profitability segment line item
+          IF lwa_upload-werks IS NOT INITIAL.
+            CLEAR lwa_criteria.
+            lwa_criteria-itemno_acc = lv_line_no.
+            lwa_criteria-fieldname  = c_werks.
+            lwa_criteria-character  = lwa_upload-werks.
+            APPEND lwa_criteria TO li_criteria.
+          ENDIF.
+
+        ENDIF.
+
+        IF li_extension2 IS INITIAL.
+          IF lwa_upload-bupla IS NOT INITIAL.
+            lwa_extension2-valuepart1 = lwa_upload-bupla.
+            APPEND lwa_extension2 TO li_extension2.
+          ENDIF.
+        ENDIF.
+
+        "Populate currency line item
+        CLEAR lwa_currency.
+        lwa_currency-itemno_acc   = lv_line_no.
+        lwa_currency-curr_type    = c_curr_type_00.
+        lwa_currency-currency     = lv_waers.
+
+        "If have tax code, calculate tax
+        IF lwa_upload-mwskz IS NOT INITIAL.
+
+          "Amount = full amount - tax amount.
+          lwa_currency-amt_doccur   = lwa_upload-wrbtr.
+
+          READ TABLE li_tax_sum INTO lwa_tax_sum WITH KEY bukrs = lwa_documentheader-comp_code
+                                                          mwskz = lwa_upload-mwskz.
+          IF sy-subrc = 0.
+            lv_index = sy-tabix.
+            IF lv_waers IN lr_round_curr.
+              lwa_tax_sum-wrbtr   = lwa_tax_sum-wrbtr   + ( lwa_upload-wrbtr / 100 ).
+              lwa_tax_sum-fwbas   = lwa_tax_sum-fwbas   + ( lwa_upload-fwbas / 100 ).
+            ELSE.
+              lwa_tax_sum-wrbtr   = lwa_tax_sum-wrbtr   + lwa_upload-wrbtr.
+              lwa_tax_sum-fwbas   = lwa_tax_sum-fwbas   + lwa_upload-fwbas.
+            ENDIF.
+
+            MODIFY li_tax_sum FROM lwa_tax_sum INDEX lv_index.
+          ELSE.
+            lwa_tax_sum-bukrs   = lwa_documentheader-comp_code.
+            lwa_tax_sum-mwskz   = lwa_upload-mwskz.
+            lwa_tax_sum-waers   = lv_waers.
+
+            IF lv_waers IN lr_round_curr.
+              lwa_tax_sum-wrbtr   = ( lwa_upload-wrbtr / 100 ).
+              lwa_tax_sum-fwbas   = ( lwa_upload-fwbas / 100 ).
+            ELSE.
+              lwa_tax_sum-wrbtr   = lwa_upload-wrbtr.
+              lwa_tax_sum-fwbas   = lwa_upload-fwbas.
+            ENDIF.
+
+            APPEND lwa_tax_sum TO li_tax_sum.
+          ENDIF.
+
+          "No tax code, set full amount
+        ELSE.
+          lwa_currency-amt_doccur   = lwa_upload-wrbtr.
+        ENDIF.
+
+        APPEND lwa_currency TO li_currency.
+
+      ENDIF.
+
+    ENDLOOP.
+
+    DATA(li_tax_curr) = populate_tax_line(
+                          im_t_tax_sum      = li_tax_sum
+                          im_t_a003         = <source>-t_a003
+                          im_documentheader = lwa_documentheader
+                          im_waers          = lv_waers
+                          im_r_round_curr   = get_rounded_tax_curr(  ) ).
+
+    result = NEW lcl_posting_repo=>ty_bapi_doc_post(  ).
+    ASSIGN result->* TO <result>.
+
+
+    "Populate header log
+    lwa_log_h-zsession  = li_upload[ 1 ]-zsession.
+    lwa_log_h-proc_user = sy-uname.
+    lwa_log_h-iffprocdt = sy-datum.
+    lwa_log_h-iffproctm = sy-uzeit.
+    lwa_log_h-zcount    = lv_count.
+    lwa_log_h-zeline    = lv_eline.
+    lwa_log_h-zpath     = <source>-path.
+    lwa_log_h-bukrs     = lwa_documentheader-comp_code.
+    lwa_log_h-bldat     = lwa_documentheader-doc_date.
+    lwa_log_h-budat     = lwa_documentheader-pstng_date.
+    lwa_log_h-xblnr     = lwa_documentheader-ref_doc_no.
+    lwa_log_h-bktxt     = lwa_documentheader-header_txt.
+    lwa_log_h-blart     = lwa_documentheader-doc_type.
+    lwa_log_h-waers     = lv_waers.
+    lwa_log_h-type      = lv_type.
+    lwa_log_h-message   = lv_message.
+    APPEND lwa_log_h TO <result>-t_log_header.
+
+    "Populate detail log
+    LOOP AT li_detail INTO lwa_detail.
+      CLEAR lwa_log_d.
+      lwa_log_d-zsession  = li_upload[ 1 ]-zsession.
+      lwa_log_d-proc_user = sy-uname.
+      lwa_log_d-iffprocdt = sy-datum.
+      lwa_log_d-iffproctm = sy-uzeit.
+      lwa_log_d-zcount    = lwa_detail-zcount.
+      lwa_log_d-zeline    = lwa_detail-zeline.
+      lwa_log_d-buzei     = lwa_detail-buzei.
+      lwa_log_d-umskz     = lwa_detail-umskz.
+      lwa_log_d-hkont     = lwa_detail-hkont.
+      lwa_log_d-kunnr     = lwa_detail-kunnr.
+      lwa_log_d-lifnr     = lwa_detail-lifnr.
+      lwa_log_d-mwskz     = lwa_detail-mwskz.
+      lwa_log_d-wrbtr     = lwa_detail-wrbtr.
+      lwa_log_d-dmbtr     = lwa_detail-dmbtr.
+      lwa_log_d-valut     = lwa_detail-valut.
+      lwa_log_d-zuonr     = lwa_detail-zuonr.
+      lwa_log_d-vbund     = lwa_detail-vbund.
+      lwa_log_d-kostl     = lwa_detail-kostl.
+      lwa_log_d-aufnr     = lwa_detail-aufnr.
+      lwa_log_d-prctr     = lwa_detail-prctr.
+      lwa_log_d-sgtxt     = lwa_detail-sgtxt.
+      lwa_log_d-zterm     = lwa_detail-zterm.
+      lwa_log_d-zfbdt     = lwa_detail-zfbdt.
+      lwa_log_d-zlsch     = lwa_detail-zlsch.
+      lwa_log_d-xref1     = lwa_detail-xref1.
+      lwa_log_d-type      = lv_type.
+      lwa_log_d-message   = lv_message.
+      APPEND lwa_log_d TO <result>-t_log_detail.
+    ENDLOOP.
+
+
+
+    <result>-document_header = lwa_documentheader.
+    <result>-t_accountgl = li_accountgl.
+    <result>-t_criteria = li_criteria.
+    <result>-t_currency = VALUE #( ( LINES OF li_currency )
+                                   ( LINES OF li_tax_curr-t_currency ) ).
+    <result>-t_extension = li_extension.
+    <result>-t_extension2 = li_extension2.
+    <result>-t_payable = li_payable.
+    <result>-t_receivable = li_receivable.
+    <result>-t_tax = VALUE #( ( LINES OF li_tax )
+                              ( LINES OF li_tax_curr-t_tax ) ).
+    <result>-execute = <source>-execute.
+
+  ENDMETHOD.
+
+  METHOD adjust_tax.
+    CONSTANTS lc_mwskz_a0 TYPE bseg-mwskz VALUE 'A0'.
+    DATA li_tax_refkey      TYPE ztinvoice_gen_detail.
+    DATA lv_tax_msg_type TYPE char1.
+    DATA lv_mwskz TYPE bseg-mwskz.
+    DATA: lv_xblnr_n       TYPE REF TO data,
+          lv_xblnr_add_seq TYPE i.
+
+    DATA(lv_tax_testrun) = COND abap_bool( WHEN im_execute = abap_true
+                                           THEN abap_false
+                                           ELSE abap_true ).
+
+    DATA(lv_tax_commit) = COND abap_bool( WHEN im_execute = abap_true
+                                           THEN abap_true
+                                           ELSE abap_false ).
+
+    REFRESH : li_tax_refkey.
+    CLEAR   : lv_tax_msg_type, lv_mwskz.
+
+    "Get Last Tax Code as last program Behavior
+    LOOP AT im_t_upload INTO DATA(lwa_upload_tax) WHERE zcount EQ im_upload-zcount.
+      IF lwa_upload_tax-mwskz IS NOT INITIAL.
+        lv_mwskz = lwa_upload_tax-mwskz..
+      ENDIF.
+    ENDLOOP.
+
+    IF lv_mwskz IS NOT INITIAL AND
+       lv_mwskz <> lc_mwskz_a0.
+
+      li_tax_refkey = VALUE #( ( bukrs = im_upload-bukrs
+                                  gjahr = im_upload-budat(4)
+                                  mwskz = lv_mwskz
+                                ) ).
+
+      CALL FUNCTION 'ZF_REF_NO_FROM_SUBSTITUTION'
+        EXPORTING
+          v_testrun         = lv_tax_testrun
+          im_commit         = lv_tax_commit
+        IMPORTING
+          ex_message_status = lv_tax_msg_type
+        CHANGING
+          ch_refkey         = li_tax_refkey.
+
+      IF lv_tax_msg_type EQ fiehc_con_msgty_e.
+
+        ex_message = 'Tax Invoice Number Does Not Exist'.
+        ex_mtype = c_message_e.
+
+      ELSE.
+
+        ASSIGN li_tax_refkey[ 1 ] TO FIELD-SYMBOL(<tax_refkey>).
+        IF <tax_refkey> IS ASSIGNED.
+          IF im_execute EQ abap_false. " Handle the Sequence for Test Run
+            DATA(lv_refkey_len) = strlen( <tax_refkey>-xblnr ).
+            CREATE DATA lv_xblnr_n TYPE n LENGTH lv_refkey_len.
+*            FIELD-SYMBOLS <lv_xblnr_n> TYPE any.
+            ASSIGN lv_xblnr_n->* TO FIELD-SYMBOL(<lv_xblnr_n>).
+            <lv_xblnr_n> = <tax_refkey>-xblnr + lv_xblnr_add_seq.
+            ex_xblnr = <lv_xblnr_n>.
+            lv_xblnr_add_seq += 1.
+          ELSE.
+            ex_xblnr = <tax_refkey>-xblnr.
+          ENDIF.
+
+        ENDIF.
+      ENDIF.
+
+    ELSE.
+      ex_message = 'Tax Code is Missing from Document'.
+      ex_mtype   = c_message_e.
+    ENDIF.
+
+  ENDMETHOD.
+
+  METHOD populate_tax_line.
+    DATA lv_line_no TYPE i.
+    DATA lwa_tax TYPE bapiactx09.
+    DATA: lwa_currency TYPE bapiaccr09,
+          lv_fwbas     TYPE bseg-fwbas,
+          lv_fwste     TYPE bset-fwste,
+          li_rtax1u15  TYPE STANDARD TABLE OF rtax1u15.
+
+    "Populate tax line item grouped by tax code
+    LOOP AT im_t_tax_sum INTO DATA(lwa_tax_sum).
+
+      lv_line_no += 1.
+
+      "Populate line item tax
+      CLEAR lwa_tax.
+      lwa_tax-itemno_acc = lv_line_no.
+      lwa_tax-tax_code   = lwa_tax_sum-mwskz.
+
+      "Get condition type
+      READ TABLE im_t_a003 INTO DATA(lwa_a003) WITH KEY mwskz = lwa_tax_sum-mwskz BINARY SEARCH.
+      IF sy-subrc = 0.
+        lwa_tax-cond_key = lwa_a003-kschl.
+      ENDIF.
+
+*        "Avoid error 'Taxes by item is activated; consequently, transfer by item is mandatory'
+      IF im_documentheader-comp_code CP 'IN*'.
+        lwa_tax-itemno_tax = '000001'.
+      ENDIF.
+
+      APPEND lwa_tax TO result-t_tax.
+
+      "Populate currency tax
+      CLEAR lwa_currency.
+
+      lwa_currency-itemno_acc   = lv_line_no.
+      lwa_currency-curr_type    = c_curr_type_00.
+      lwa_currency-currency     = im_waers.
+
+      "IF tax calculated is 1%, using value from amount base for the calculation
+      IF lwa_tax_sum-fwbas IS NOT INITIAL.
+        lv_fwbas = lwa_tax_sum-fwbas.
+      ELSE.
+        lv_fwbas = lwa_tax_sum-wrbtr.
+      ENDIF.
+
+      CALL FUNCTION 'CALCULATE_TAX_FROM_NET_AMOUNT'
+        EXPORTING
+          i_bukrs           = im_documentheader-comp_code
+          i_mwskz           = lwa_tax_sum-mwskz
+          i_waers           = im_waers
+          i_wrbtr           = lv_fwbas
+        IMPORTING
+          e_fwste           = lv_fwste
+        TABLES
+          t_mwdat           = li_rtax1u15
+        EXCEPTIONS
+          bukrs_not_found   = 1
+          country_not_found = 2
+          mwskz_not_defined = 3
+          mwskz_not_valid   = 4
+          ktosl_not_found   = 5
+          kalsm_not_found   = 6
+          parameter_error   = 7
+          knumh_not_found   = 8
+          kschl_not_found   = 9
+          unknown_error     = 10
+          account_not_found = 11
+          txjcd_not_valid   = 12
+          OTHERS            = 13.
+      IF sy-subrc <> 0.
+* Implement suitable error handling here
+      ENDIF.
+
+      READ TABLE li_rtax1u15 INTO DATA(lwa_rtax1u15) INDEX 1.
+      IF sy-subrc = 0.
+        IF im_waers IN im_r_round_curr.
+          lwa_currency-amt_doccur   = lwa_rtax1u15-wmwst * 100.
+          lwa_currency-amt_base     = lv_fwbas * 100.
+          lwa_currency-tax_amt      = lv_fwste * 100.
+        ELSE.
+          lwa_currency-amt_doccur   = lwa_rtax1u15-wmwst.
+          lwa_currency-amt_base     = lv_fwbas.
+          lwa_currency-tax_amt      = lv_fwste.
+        ENDIF.
+      ENDIF.
+
+      APPEND lwa_currency TO result-t_currency.
+
+    ENDLOOP.
+
+  ENDMETHOD.
+
+
+  METHOD get_rounded_tax_curr.
+
+    DATA :
+          lwr_round_curr LIKE LINE OF result.
+
+    lwr_round_curr-option = imphs_c_option-equal.
+    lwr_round_curr-sign   = imphs_c_sign-including.
+
+    lwr_round_curr-low    = c_waers-c_waers_idr.
+    APPEND lwr_round_curr TO result.
+
+    lwr_round_curr-low    = c_waers-c_waers_vnd.
+    APPEND lwr_round_curr TO result.
+
+    lwr_round_curr-low    = c_waers-c_waers_jpy.
+    APPEND lwr_round_curr TO result.
+
+  ENDMETHOD.
+
+ENDCLASS.
+
+CLASS lcl_file_reader DEFINITION CREATE PUBLIC.
+
+  PUBLIC SECTION.
+
+    METHODS read_file IMPORTING im_path       TYPE rlgrap-filename
+                      RETURNING VALUE(result) TYPE zcl_avalon_stg_data_service=>ty_t_file_data
+                      RAISING   zcx_data_service.
+
+    METHODS get_file_location RETURNING VALUE(result) TYPE rlgrap-filename.
+  PROTECTED SECTION.
+  PRIVATE SECTION.
+    CONSTANTS: BEGIN OF c_ext,
+                 c_csv TYPE char3 VALUE 'csv',
+                 c_xls TYPE char3 VALUE 'xls',
+               END OF c_ext.
+    CONSTANTS c_ruma TYPE bukrs VALUE 'ID10'.
+
+    METHODS read_csv_file IMPORTING im_path       TYPE rlgrap-filename
+                          RETURNING VALUE(result) TYPE zcl_avalon_stg_data_service=>ty_t_file_data
+                          RAISING   zcx_data_service.
+    METHODS read_excel_file IMPORTING im_path       TYPE rlgrap-filename
+                            RETURNING VALUE(result) TYPE zcl_avalon_stg_data_service=>ty_t_file_data
+                            RAISING   zcx_data_service.
+    METHODS get_extension_file IMPORTING im_path       TYPE rlgrap-filename
+                               RETURNING VALUE(result) TYPE char3.
+
+
+ENDCLASS.
+
+
+CLASS lcl_file_reader IMPLEMENTATION.
+
+  METHOD read_file.
+
+    IF get_extension_file( im_path ) = c_ext-c_csv.
+      result = read_csv_file( im_path ).
+    ELSE.
+      result = read_excel_file( im_path ).
+    ENDIF.
+
+
+
+  ENDMETHOD.
+
+  METHOD read_csv_file.
+    CONSTANTS:
+    lc_max_csv_row TYPE i VALUE '1000000'.
+
+    DATA:
+      li_string TYPE STANDARD TABLE OF string,
+      lo_csv    TYPE REF TO cl_rsda_csv_converter,
+      lw_csv    TYPE zcl_avalon_stg_data_service=>ty_file_data,
+      lv_path   TYPE string
+      .
+
+    lv_path = im_path.
+    CALL FUNCTION 'GUI_UPLOAD'
+      EXPORTING
+        filename = lv_path
+      TABLES
+        data_tab = li_string.
+
+    "Delete header
+*    DELETE li_string INDEX 2.
+*    DELETE li_string INDEX 1.
+
+    "Validate Max Row
+    DESCRIBE TABLE li_string LINES DATA(lv_lines).
+    IF lv_lines > lc_max_csv_row.
+*      MESSAGE 'Maximum row allowed for CSV file is 1 million rows' TYPE 'S' DISPLAY LIKE 'E'.
+*      LEAVE LIST-PROCESSING.
+      RAISE EXCEPTION NEW zcx_data_service(
+        error_msg         = 'Maximum row allowed for CSV file is 1 million rows'
+      ).
+    ENDIF.
+
+    "Convert to structure.
+    lo_csv = cl_rsda_csv_converter=>create( i_separator = cl_abap_char_utilities=>horizontal_tab ).
+
+    LOOP AT li_string INTO DATA(lw_string)
+     FROM 2.
+      CALL METHOD lo_csv->csv_to_structure
+        EXPORTING
+          i_data   = lw_string
+        IMPORTING
+          e_s_data = lw_csv.
+
+      lw_csv-filename = im_path.
+
+      APPEND lw_csv TO result.
+    ENDLOOP.
+
+
+
+  ENDMETHOD.
+
+  METHOD read_excel_file.
+
+    DATA:
+      li_string      TYPE STANDARD TABLE OF string,
+      li_zfmj_excel  TYPE STANDARD TABLE OF zfmj_excel,
+      li_intern      TYPE STANDARD TABLE OF alsmex_tabline,
+      lwa_string     TYPE string,
+      lwa_excel      TYPE zcl_avalon_stg_data_service=>ty_file_data,
+*    lwa_upload     TYPE t_upload,
+      lwa_zfmj_excel TYPE zfmj_excel,
+      lwa_intern     TYPE alsmex_tabline,
+      lv_separator   TYPE c          VALUE '#',
+      lo_ref         TYPE REF TO cx_root,
+      lv_chk_len     TYPE i,
+      lv_count       TYPE i          VALUE 0,
+      lv_eline       TYPE i          VALUE 0.
+
+    CALL FUNCTION 'ALSM_EXCEL_TO_INTERNAL_TABLE'
+      EXPORTING
+        filename                = im_path
+        i_begin_col             = 2
+        i_begin_row             = 3
+        i_end_col               = 2
+        i_end_row               = 3
+      TABLES
+        intern                  = li_intern
+      EXCEPTIONS
+        inconsistent_parameters = 1
+        upload_ole              = 2
+        OTHERS                  = 3.
+    IF sy-subrc <> 0.
+*      MESSAGE 'Excel file not found'(031) TYPE fiehc_con_msgty_s DISPLAY LIKE fiehc_con_msgty_e.
+*      LEAVE LIST-PROCESSING.
+      RAISE EXCEPTION NEW zcx_data_service(
+        error_msg         = 'Excel file not found'
+      ).
+    ELSE.
+      READ TABLE li_intern INTO lwa_intern INDEX 1.
+    ENDIF.
+
+    IF lwa_intern-value = c_ruma.
+      CALL FUNCTION 'ZF_FAA_FILE_UPLOAD_EXCEL'
+        EXPORTING
+          i_filename           = im_path
+          i_delimiter          = '#'
+        TABLES
+          et_filecontent       = li_string
+        EXCEPTIONS
+          error_accessing_file = 1
+          OTHERS               = 2.
+    ELSE.
+      CALL FUNCTION 'FAA_FILE_UPLOAD_EXCEL'
+        EXPORTING
+          i_filename           = im_path
+          i_delimiter          = '#'
+        TABLES
+          et_filecontent       = li_string
+        EXCEPTIONS
+          error_accessing_file = 1
+          OTHERS               = 2.
+    ENDIF.
+* END OF INSERTION RYANTOS GD1K905457
+
+    IF sy-subrc <> 0.
+*      MESSAGE 'Excel file not found'(031) TYPE fiehc_con_msgty_s DISPLAY LIKE fiehc_con_msgty_e.
+*      LEAVE LIST-PROCESSING.
+      RAISE EXCEPTION NEW zcx_data_service(
+        error_msg         = 'Excel file not found'
+      ).
+    ELSE.
+      LOOP AT li_string INTO lwa_string FROM 3.
+        CLEAR: lwa_excel, lwa_zfmj_excel, lv_chk_len.
+
+        lv_eline = lv_eline + 1.
+
+        SPLIT lwa_string AT lv_separator INTO lwa_excel-buzei
+                                              lwa_excel-bukrs
+                                              lwa_excel-bldat
+                                              lwa_excel-budat
+                                              lwa_excel-xblnr
+                                              lwa_excel-bktxt
+                                              lwa_excel-blart
+                                              lwa_excel-waers
+                                              lwa_excel-umskz
+                                              lwa_excel-hkont
+                                              lwa_excel-kunnr
+                                              lwa_excel-lifnr
+                                              lwa_excel-mwskz
+                                              lwa_excel-fwbas
+                                              lwa_excel-wrbtr
+                                              lwa_excel-dmbtr
+                                              lwa_excel-valut
+                                              lwa_excel-zuonr
+                                              lwa_excel-vbund
+                                              lwa_excel-kostl
+                                              lwa_excel-aufnr
+                                              lwa_excel-werks
+                                              lwa_excel-prctr
+                                              lwa_excel-sgtxt
+                                              lwa_excel-zterm
+                                              lwa_excel-zfbdt
+                                              lwa_excel-zlsch
+                                              lwa_excel-xref1
+                                              lwa_excel-posid
+                                              lwa_excel-matnr
+                                              lwa_excel-bupla
+                                              lwa_excel-bcode
+                                              lwa_excel-long_text
+                                              lwa_excel-xref2
+                                              .
+
+        lwa_excel-filename = im_path.
+
+        APPEND lwa_excel TO result.
+
+      ENDLOOP.
+
+    ENDIF.
+
+
+  ENDMETHOD.
+
+  METHOD get_extension_file.
+
+    SPLIT im_path AT '.' INTO TABLE DATA(li_ext).
+    DESCRIBE TABLE li_ext LINES DATA(lv_lines).
+    READ TABLE li_ext INTO DATA(lv_extension) INDEX lv_lines.
+    TRANSLATE lv_extension TO UPPER CASE.
+
+    IF lv_extension = c_ext-c_csv.
+      result = c_ext-c_csv.
+    ELSE.
+      result = c_ext-c_csv.
+    ENDIF.
+
+  ENDMETHOD.
+
+  METHOD get_file_location.
+
+    DATA:
+      li_tabemp   TYPE         filetable,
+      lwa_tabemp  TYPE LINE OF filetable,
+      lv_subrcemp TYPE         i,
+      lv_title    TYPE         string,
+      lv_filter   TYPE         string.
+
+    lv_filter = 'Microsoft Excel & CSV Files (*.XLS;*.XLSX;*.CSV)|*.XLS;*.XLSX;*.CSV|'(032).
+    lv_title  = 'Select File'(029).
+
+    REFRESH:
+      li_tabemp.
+
+    CALL METHOD cl_gui_frontend_services=>file_open_dialog
+      EXPORTING
+        window_title      = lv_title
+        default_filename  = ''
+        file_filter       = lv_filter
+        initial_directory = 'C:\'
+        multiselection    = abap_false
+      CHANGING
+        file_table        = li_tabemp
+        rc                = lv_subrcemp.
+    IF sy-subrc <> 0      ##SUBRC_OK.
+      " The file could not be found
+      MESSAGE ID sy-msgid TYPE fiehc_con_msgty_s NUMBER sy-msgno
+             DISPLAY LIKE sy-msgty
+             WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+    ELSE.
+      READ TABLE li_tabemp INTO lwa_tabemp INDEX 1.
+      IF sy-subrc = 0.
+        result = lwa_tabemp-filename.
+        CONDENSE result.
+      ENDIF.
+    ENDIF.
+
+    FREE:
+       li_tabemp.
+
+
+  ENDMETHOD.
+
+ENDCLASS.
+
+
+CLASS lcl_journal_uploader DEFINITION CREATE PUBLIC.
+
+  PUBLIC SECTION.
+    TYPES ty_t_data TYPE STANDARD TABLE OF zfava_post_stg WITH EMPTY KEY
+                                                          WITH NON-UNIQUE SORTED KEY second_key COMPONENTS zcount.
+    METHODS run_posting IMPORTING im_obj        TYPE REF TO object
+                                  im_exec       TYPE abap_bool
+                                  im_filepath   TYPE rlgrap-filename
+                                  im_tax_inv    TYPE abap_bool
+                        RETURNING VALUE(result) TYPE REF TO data
+                        RAISING
+                                  zcx_data_service.
+  PROTECTED SECTION.
+  PRIVATE SECTION.
+    TYPES: BEGIN OF ty_count,
+             zcount TYPE zfava_post_stg-zcount,
+           END OF ty_count,
+
+           ty_t_count TYPE STANDARD TABLE OF ty_count WITH EMPTY KEY.
+
+    DATA: mo_posting_data_serv TYPE REF TO zif_data_service,
+          mo_posting_repo      TYPE REF TO zif_repository.
+
+    METHODS simulate_post
+      IMPORTING
+        im_t_count      TYPE ty_t_count
+        im_t_data       TYPE ty_t_data
+        im_t_a003       TYPE zif_ava_validated_data_stg=>t_a003_tab
+        im_o_repository TYPE REF TO zif_repository
+        im_o_data_serv  TYPE REF TO zif_data_service
+        im_t_log_header TYPE zcl_ava_log_repository=>ty_source-t_log_header
+        im_t_log_detail TYPE zcl_ava_log_repository=>ty_source-t_log_detail
+        im_filepath     TYPE rlgrap-filename
+        im_tax_inv      TYPE abap_bool
+      RETURNING
+        VALUE(result)   TYPE zcl_ava_log_repository=>ty_source
+      RAISING
+        zcx_data_service.
+    METHODS post
+      IMPORTING
+        im_t_count      TYPE ty_t_count
+        im_t_data       TYPE ty_t_data
+        im_t_a003       TYPE zif_ava_validated_data_stg=>t_a003_tab
+        im_o_repository TYPE REF TO zif_repository
+        im_o_data_serv  TYPE REF TO zif_data_service
+        im_t_log_header TYPE zcl_ava_log_repository=>ty_source-t_log_header
+        im_t_log_detail TYPE zcl_ava_log_repository=>ty_source-t_log_detail
+        im_filepath     TYPE rlgrap-filename
+        im_tax_inv      TYPE abap_bool
+      RETURNING
+        VALUE(result)   TYPE zcl_ava_log_repository=>ty_source
+      RAISING
+        zcx_data_service.
+
+ENDCLASS.
+
+CLASS lcl_journal_uploader IMPLEMENTATION.
+
+  METHOD run_posting.
+    FIELD-SYMBOLS <logs> TYPE zcl_ava_log_repository=>ty_source.
+    FIELD-SYMBOLS <result> TYPE zcl_ava_log_repository=>ty_source.
+    DATA lo_data_service TYPE REF TO zif_data_service.
+    DATA lo_repository TYPE REF TO zif_repository.
+    DATA lt_source_data TYPE lcl_posting_data_service=>ty_source_data.
+    DATA lo_log TYPE REF TO data.
+    DATA log_temp_h TYPE zcl_ava_log_repository=>ty_source-t_log_header.
+    DATA log_temp_d TYPE zcl_ava_log_repository=>ty_source-t_log_detail.
+
+    result = NEW zcl_ava_log_repository=>ty_source(  ).
+    ASSIGN result->* TO <result>.
+
+    DATA(lo_data) = CAST zif_ava_validated_data_stg( im_obj ).
+    DATA(lt_data) = lo_data->it_data.
+    DATA(lt_a003) = lo_data->it_a003.
+
+    IF mo_posting_data_serv IS BOUND.
+      lo_data_service = mo_posting_data_serv.
+    ELSE.
+      lo_data_service = NEW lcl_posting_data_service( ).
+    ENDIF.
+
+    IF mo_posting_repo IS BOUND.
+      lo_repository = mo_posting_repo.
+    ELSE.
+      lo_repository = NEW lcl_posting_repo( ).
+    ENDIF.
+
+*    DATA(lt_s_data) = CORRESPONDING ty_t_data( lt_data ).
+
+    SELECT DISTINCT zcount
+    FROM @lt_data AS s
+    ORDER BY zcount
+    INTO TABLE @DATA(lt_count)
+    ##db_feature_mode[itabs_in_from_clause] ##itab_db_select.
+
+    IF lines( lt_count ) > 0.
+
+      TRY.
+
+          <result> = COND #( WHEN im_exec = abap_false
+                             THEN simulate_post( im_t_count      = lt_count
+                                                 im_t_data       = CORRESPONDING ty_t_data( lt_data )
+                                                 im_t_a003       = lt_a003
+                                                 im_o_repository = lo_repository
+                                                 im_o_data_serv  = lo_data_service
+                                                 im_t_log_header = lo_data->it_log_header
+                                                 im_t_log_detail = lo_data->it_log_detail
+                                                 im_filepath = im_filepath
+                                                 im_tax_inv = im_tax_inv )
+                             ELSE post( im_t_count      = lt_count
+                                        im_t_data       = CORRESPONDING ty_t_data( lt_data )
+                                        im_t_a003       = lt_a003
+                                        im_o_repository = lo_repository
+                                        im_o_data_serv  = lo_data_service
+                                        im_t_log_header = lo_data->it_log_header
+                                        im_t_log_detail = lo_data->it_log_detail
+                                        im_filepath = im_filepath
+                                        im_tax_inv = im_tax_inv ) ).
+
+
+        CATCH zcx_data_service INTO DATA(error_msg).
+          RAISE EXCEPTION error_msg.
+
+      ENDTRY.
+
+    ELSE.
+
+      <result>-t_log_header = lo_data->it_log_header.
+      <result>-t_log_detail = lo_data->it_log_detail.
+
+    ENDIF.
+
+  ENDMETHOD.
+
+
+  METHOD post.
+    FIELD-SYMBOLS <logs> TYPE zcl_ava_log_repository=>ty_source.
+
+    DATA(simulate_result) = simulate_post(
+                              im_t_count      = im_t_count
+                              im_t_data       = im_t_data
+                              im_t_a003       = im_t_a003
+                              im_o_repository = im_o_repository
+                              im_o_data_serv  = im_o_data_serv
+                              im_t_log_header = im_t_log_header
+                              im_t_log_detail = im_t_log_detail
+                              im_filepath = im_filepath
+                              im_tax_inv = im_tax_inv
+                            ).
+    READ TABLE simulate_result-t_log_header TRANSPORTING NO FIELDS WITH KEY type = 'E'.
+    IF sy-subrc <> 0.
+      result-t_log_header = im_t_log_header.
+      result-t_log_detail = im_t_log_detail.
+
+      LOOP AT im_t_count ASSIGNING FIELD-SYMBOL(<lwa_count>).
+
+        DATA(lt_source_data) = VALUE lcl_posting_data_service=>ty_source_data(
+            t_data  = FILTER #( im_t_data USING KEY second_key
+                                WHERE zcount = <lwa_count>-zcount )
+            t_a003  = im_t_a003
+            execute = abap_true
+            path = im_filepath
+            tax_inv = im_tax_inv
+        ).
+
+        TRY.
+            DATA(lo_log) = im_o_repository->create_by_ref( im_o_data_serv->generate_data( lt_source_data ) ).
+            ASSIGN lo_log->* TO <logs>.
+            result-t_log_header = VALUE #( BASE result-t_log_header
+                                          ( LINES OF <logs>-t_log_header ) ).
+
+            result-t_log_detail = VALUE #( BASE result-t_log_detail
+                                          ( LINES OF <logs>-t_log_detail ) ).
+          CATCH zcx_data_service INTO DATA(error_msg).
+            RAISE EXCEPTION error_msg.
+
+        ENDTRY.
+
+
+      ENDLOOP.
+
+    ELSE.
+
+      result = simulate_result.
+
+    ENDIF.
+
+  ENDMETHOD.
+
+  METHOD simulate_post.
+
+    FIELD-SYMBOLS <logs> TYPE zcl_ava_log_repository=>ty_source.
+
+    result-t_log_header = im_t_log_header.
+    result-t_log_detail = im_t_log_detail.
+
+    LOOP AT im_t_count ASSIGNING FIELD-SYMBOL(<lwa_count>).
+
+      DATA(lt_source_data) = VALUE lcl_posting_data_service=>ty_source_data(
+          t_data  = FILTER #( im_t_data USING KEY second_key
+                              WHERE zcount = <lwa_count>-zcount )
+          t_a003  = im_t_a003
+          execute = abap_false
+          path = im_filepath
+          tax_inv = im_tax_inv
+      ).
+
+      TRY.
+          DATA(lo_log) = im_o_repository->create_by_ref( im_o_data_serv->generate_data( lt_source_data ) ).
+          ASSIGN lo_log->* TO <logs>.
+          result-t_log_header = VALUE #( BASE result-t_log_header
+                                        ( LINES OF <logs>-t_log_header ) ).
+
+          result-t_log_detail = VALUE #( BASE result-t_log_detail
+                                        ( LINES OF <logs>-t_log_detail ) ).
+        CATCH zcx_data_service INTO DATA(error_msg).
+          RAISE EXCEPTION error_msg.
+
+      ENDTRY.
+
+
+    ENDLOOP.
+
+  ENDMETHOD.
+
+ENDCLASS.
+
+CLASS lcl_report_data_serv DEFINITION
+CREATE PUBLIC
+INHERITING FROM zcl_data_service_abstract.
+
+  PUBLIC SECTION.
+    TYPES: BEGIN OF ty_report,   "Report Tables
+             session TYPE nrlevel,
+             count   TYPE i,
+             eline   TYPE i,
+             bukrs   TYPE bseg-bukrs,
+             bldat   TYPE bkpf-bldat,
+             budat   TYPE bkpf-budat,
+             xblnr   TYPE bkpf-xblnr,
+             bktxt   TYPE bkpf-bktxt,
+             blart   TYPE bkpf-blart,
+             waers   TYPE bkpf-waers,
+             belnr   TYPE bkpf-belnr,
+             type    TYPE bapiret2-type,
+             message TYPE bapiret2-message,
+           END OF ty_report,
+           ty_t_report TYPE STANDARD TABLE OF ty_report WITH EMPTY KEY.
+
+    METHODS zif_data_service~generate_by_ref REDEFINITION.
+  PROTECTED SECTION.
+  PRIVATE SECTION.
+
+ENDCLASS.
+
+CLASS lcl_report_data_serv IMPLEMENTATION.
+
+  METHOD zif_data_service~generate_by_ref.
+    FIELD-SYMBOLS <source_data> TYPE zcl_ava_log_repository=>ty_source.
+    FIELD-SYMBOLS <result> TYPE ty_t_report.
+    ASSIGN im_data->* TO <source_data>.
+
+    DATA: lwa_log_h  TYPE zfava_log_h,
+          lwa_report TYPE ty_report.
+
+    result = NEW ty_t_report(  ).
+    ASSIGN result->* TO <result>.
+
+
+    LOOP AT <source_data>-t_log_header INTO lwa_log_h.
+      CLEAR lwa_report.
+      lwa_report-session  = lwa_log_h-zsession.
+      lwa_report-count    = lwa_log_h-zcount.
+      lwa_report-eline    = lwa_log_h-zeline.
+      lwa_report-bukrs    = lwa_log_h-bukrs.
+      lwa_report-bldat    = lwa_log_h-bldat.
+      lwa_report-budat    = lwa_log_h-budat.
+      lwa_report-xblnr    = lwa_log_h-xblnr.
+      lwa_report-bktxt    = lwa_log_h-bktxt.
+      lwa_report-blart    = lwa_log_h-blart.
+      lwa_report-waers    = lwa_log_h-waers.
+      lwa_report-belnr    = lwa_log_h-belnr.
+      lwa_report-type     = lwa_log_h-type.
+
+      IF lwa_log_h-type EQ 'E'.
+        "Increase 2 line number to match the line number in excel
+        lwa_log_h-zeline = lwa_log_h-zeline + 2.
+
+        SHIFT lwa_log_h-zeline LEFT DELETING LEADING '0'.
+        CONCATENATE 'Excel line' lwa_log_h-zeline lwa_log_h-message INTO lwa_report-message SEPARATED BY space.
+      ENDIF.
+
+      APPEND lwa_report TO <result>.
+    ENDLOOP.
+
+    SORT <result> BY count ASCENDING
+                     eline ASCENDING.
+
+  ENDMETHOD.
+
+ENDCLASS.
+
+CLASS lcl_report_data_serv2 DEFINITION
+CREATE PUBLIC
+INHERITING FROM zcl_data_service_abstract.
+
+  PUBLIC SECTION.
+    METHODS zif_data_service~generate_by_ref REDEFINITION.
+  PROTECTED SECTION.
+  PRIVATE SECTION.
+
+ENDCLASS.
+
+CLASS lcl_report_data_serv2 IMPLEMENTATION.
+
+  METHOD zif_data_service~generate_by_ref.
+
+    FIELD-SYMBOLS <source_data> TYPE zcl_ava_log_repository=>ty_source.
+    FIELD-SYMBOLS <result> TYPE zcl_ava_log_repository=>ty_source-t_log_header.
+    ASSIGN im_data->* TO <source_data>.
+    result = NEW zcl_ava_log_repository=>ty_source-t_log_header( ).
+    ASSIGN result->* TO <result>.
+    <result> = <source_data>-t_log_header.
+
+  ENDMETHOD.
+
+ENDCLASS.
+
+CLASS lcl_main DEFINITION CREATE PRIVATE.
+
+  PUBLIC SECTION.
+
+    TYPES: ty_t_sess_range TYPE RANGE OF nrlevel.
+    CLASS-METHODS create
+      RETURNING
+        VALUE(r_result) TYPE REF TO lcl_main.
+
+    METHODS run IMPORTING im_t_sess_range TYPE ty_t_sess_range
+                          im_t_compcode_r TYPE zcl_ava_log_repository=>ty_rpt-t_compcode_range
+                          im_t_docnum_r   TYPE zcl_ava_log_repository=>ty_rpt-t_docnum_range
+                          im_t_postdate_r TYPE zcl_ava_log_repository=>ty_rpt-t_postdate_range
+                          im_session      TYPE nriv_iv-nrlevel
+                          im_filepath     TYPE rlgrap-filename
+                          im_bjob         TYPE abap_bool
+                          im_tax_inv      TYPE abap_bool
+                          im_execute      TYPE abap_bool
+                          im_display_rpt  TYPE abap_bool
+                          im_call_cpi     TYPE abap_bool
+                RETURNING VALUE(result)   TYPE REF TO data
+                RAISING
+                          zcx_data_service.
+
+    METHODS run_background IMPORTING im_t_sess_range TYPE ty_t_sess_range
+                                     im_session      TYPE nriv_iv-nrlevel
+                                     im_filepath     TYPE rlgrap-filename
+                                     im_bjob         TYPE abap_bool
+                                     im_tax_inv      TYPE abap_bool
+                                     im_execute      TYPE abap_bool
+                                     im_display_rpt  TYPE abap_bool
+                                     im_call_cpi     TYPE abap_bool
+                           RETURNING VALUE(result)   TYPE btcjob.
+  PROTECTED SECTION.
+  PRIVATE SECTION.
+    TYPES: BEGIN OF ty_data,
+             session       TYPE nriv_iv-nrlevel,
+             filepath      TYPE rlgrap-filename,
+             bjob          TYPE abap_bool,
+             tax_inv       TYPE abap_bool,
+             execute       TYPE abap_bool,
+             t_source_data TYPE zcl_ava_stg_repo=>ty_t_stg,
+           END OF ty_data.
+
+    METHODS get_source_data
+      IMPORTING im_session    TYPE nriv_iv-nrlevel
+                im_filepath   TYPE rlgrap-filename
+                im_bjob       TYPE abap_bool
+      RETURNING VALUE(result) TYPE zcl_ava_stg_repo=>ty_t_stg
+      RAISING
+                zcx_data_service.
+
+    METHODS process_data IMPORTING im_t_sess_range  TYPE ty_t_sess_range
+                                   im_session       TYPE nriv_iv-nrlevel
+                                   im_filepath      TYPE rlgrap-filename
+                                   im_bjob          TYPE abap_bool
+                                   im_tax_inv       TYPE abap_bool
+                                   im_execute       TYPE abap_bool
+                                   im_display_rpt   TYPE abap_bool
+*                                   im_call_cpi      TYPE abap_bool
+                                   im_t_source_data TYPE zcl_ava_stg_repo=>ty_t_stg
+                         RETURNING VALUE(result)    TYPE REF TO data.
+
+    METHODS call_cpi IMPORTING im_data       TYPE REF TO data
+
+                     RETURNING VALUE(result) TYPE REF TO data.
+
+
+
+ENDCLASS.
+
+CLASS lcl_main IMPLEMENTATION.
+
+  METHOD create.
+
+    r_result = NEW #( ).
+
+  ENDMETHOD.
+
+  METHOD run.
+
+    DATA lo_data_serv TYPE REF TO zif_data_service.
+    DATA lo_rpt_repo TYPE REF TO zif_repository.
+    lo_data_serv = NEW lcl_report_data_serv2( ).
+    lo_rpt_repo = NEW zcl_ava_log_repository( ).
+
+    TRY.
+
+*        result = COND #( WHEN im_display_rpt = abap_true
+*                         THEN lo_data_serv->generate_by_ref( lo_rpt_repo->read(
+*                                                    VALUE zcl_ava_log_repository=>ty_rpt(
+*                                                     t_compcode_range = im_t_compcode_r
+*                                                     t_docnum_range = im_t_docnum_r
+*                                                     t_postdate_range = im_t_postdate_r
+*                                                     t_session_range = im_t_sess_range ) ) )
+*                         ELSE lo_data_serv->generate_by_ref(
+*                                  lo_rpt_repo->create_by_ref(
+*                                    process_data( im_t_sess_range  = im_t_sess_range
+*                                                  im_session       = im_session
+*                                                  im_filepath      = im_filepath
+*                                                  im_bjob          = im_bjob
+*                                                  im_tax_inv       = im_tax_inv
+*                                                  im_execute       = im_execute
+*                                                  im_display_rpt   = im_display_rpt
+**                                                  im_call_cpi      = im_call_cpi
+*                                                  im_t_source_data = get_source_data(
+*                                                                       im_session  = im_session
+*                                                                       im_filepath = im_filepath
+*                                                                       im_bjob     = im_bjob ) ) ) ) ).
+
+        result = COND #( WHEN im_display_rpt = abap_true
+                         THEN lo_data_serv->generate_by_ref( lo_rpt_repo->read(
+                                                    VALUE zcl_ava_log_repository=>ty_rpt(
+                                                     t_compcode_range = im_t_compcode_r
+                                                     t_docnum_range = im_t_docnum_r
+                                                     t_postdate_range = im_t_postdate_r
+                                                     t_session_range = im_t_sess_range ) ) )
+                         ELSE COND #( WHEN im_call_cpi = abap_true
+                                      THEN lo_data_serv->generate_by_ref(
+                                             call_cpi(
+                                               lo_rpt_repo->create_by_ref(
+                                                 process_data( im_t_sess_range  = im_t_sess_range
+                                                               im_session       = im_session
+                                                               im_filepath      = im_filepath
+                                                               im_bjob          = im_bjob
+                                                               im_tax_inv       = im_tax_inv
+                                                               im_execute       = im_execute
+                                                               im_display_rpt   = im_display_rpt
+                                                               im_t_source_data = get_source_data(
+                                                                                    im_session  = im_session
+                                                                                    im_filepath = im_filepath
+                                                                                    im_bjob     = im_bjob ) ) ) ) )
+                                        ELSE lo_data_serv->generate_by_ref(
+                                              lo_rpt_repo->create_by_ref(
+                                                process_data( im_t_sess_range  = im_t_sess_range
+                                                              im_session       = im_session
+                                                              im_filepath      = im_filepath
+                                                              im_bjob          = im_bjob
+                                                              im_tax_inv       = im_tax_inv
+                                                              im_execute       = im_execute
+                                                              im_display_rpt   = im_display_rpt
+                                                              im_t_source_data = get_source_data(
+                                                                                   im_session  = im_session
+                                                                                   im_filepath = im_filepath
+                                                                                   im_bjob     = im_bjob ) ) ) ) ) ).
+
+      CATCH zcx_data_service INTO DATA(error_msg).
+        RAISE EXCEPTION error_msg.
+    ENDTRY.
+
+  ENDMETHOD.
+
+  METHOD get_source_data.
+
+    DATA lo_data_serv TYPE REF TO zif_data_service.
+    DATA lo_repository TYPE REF TO zif_repository.
+    FIELD-SYMBOLS <result> TYPE zcl_ava_stg_repo=>ty_t_stg.
+    DATA lt_data TYPE REF TO data.
+
+    DATA(lo_file_reader) = NEW lcl_file_reader( ).
+    lo_data_serv = NEW zcl_avalon_stg_data_service( ).
+    lo_repository = NEW zcl_ava_stg_repo( ).
+
+
+
+    IF im_session IS INITIAL.
+
+      TRY.
+          lt_data = lo_data_serv->generate_data( lo_file_reader->read_file( im_filepath ) ).
+        CATCH zcx_data_service INTO DATA(error_msg).
+          RAISE EXCEPTION error_msg.
+      ENDTRY.
+
+
+    ELSE.
+      lt_data = lo_repository->read( im_session ).
+      lo_repository->delete( im_session ).
+
+    ENDIF.
+
+    ASSIGN lt_data->* TO <result>.
+
+    IF im_bjob = abap_true.
+      lo_repository->create( <result> ).
+    ENDIF.
+
+    result = <result>.
+
+  ENDMETHOD.
+
+  METHOD process_data.
+
+    DATA lo_repository TYPE REF TO zif_repository.
+    DATA lo_stg_data_serv TYPE REF TO zif_data_service.
+    DATA lo_post_data_serv TYPE REF TO zif_data_service.
+    DATA lv_filepath TYPE localfile.
+
+    lo_repository = NEW lcl_posting_repo( ).
+    lo_stg_data_serv = NEW zcl_avalon_stg_data_service( ).
+    lo_post_data_serv = NEW lcl_posting_data_service( ).
+    DATA(lo_journal_uploader) = NEW lcl_journal_uploader( ).
+
+*    IF im_bjob = abap_true.
+*
+*      " self submit
+*
+*      data(lv_jobname) = run_background(
+*        EXPORTING
+*          im_t_sess_range = im_t_sess_range
+*          im_session     = COND #( when im_session is initial
+*                                   THEN im_t_source_data[ 1 ]-zsession
+*                                   ELSE im_session )
+*          im_filepath    = im_filepath
+*          im_bjob        = im_bjob
+*          im_tax_inv     = im_tax_inv
+*          im_execute     = im_execute
+*          im_display_rpt = im_display_rpt
+*          im_call_cpi    = im_call_cpi
+*      ).
+*
+*
+*
+*    ELSE.
+    ASSIGN im_t_source_data[ 1 ]-filename TO FIELD-SYMBOL(<filepath>).
+    IF <filepath> IS ASSIGNED.
+      lv_filepath = <filepath>.
+    ELSE.
+      lv_filepath = im_filepath.
+    ENDIF.
+
+    TRY.
+        result = lo_journal_uploader->run_posting(
+                   im_obj  = lo_stg_data_serv->validate_by_obj(
+                               NEW zcl_ava_data_staging( im_data     = im_t_source_data
+                                                         im_filepath = lv_filepath ) )
+                   im_exec = im_execute
+                   im_filepath = lv_filepath
+                   im_tax_inv = im_tax_inv
+                 ).
+
+
+
+*        IF im_call_cpi = abap_true.
+*          call_cpi( result ).
+*        ENDIF.
+
+      CATCH zcx_data_service.
+        "handle exception
+    ENDTRY.
+
+*    ENDIF.
+
+
+
+  ENDMETHOD.
+
+  METHOD call_cpi.
+    DATA: lo_cpi   TYPE REF TO zcl_simple_cpi_trigger,
+          lo_slack TYPE REF TO zcl_simple_slack.
+
+    DATA: lo_response    TYPE REF TO if_rest_entity,
+          ld_response    TYPE string,
+          ld_http_status TYPE string,
+          ld_text        TYPE string.
+
+    FIELD-SYMBOLS <source> TYPE zcl_ava_log_repository=>ty_source.
+    FIELD-SYMBOLS <result> TYPE zcl_ava_log_repository=>ty_source.
+    result = NEW  zcl_ava_log_repository=>ty_source(  ).
+    ASSIGN result->* TO <result>.
+    ASSIGN im_data->* TO <source>.
+    <result> = <source>.
+
+
+    DATA(pv_run_id) = <source>-t_log_header[ 1 ]-zsession.
+    DATA(ld_bukrs) = <source>-t_log_header[ 1 ]-bukrs.
+    DATA: ld_prog_id    TYPE zzcpi_webhooks-program_id.
+
+    ld_prog_id = sy-repid.
+    SELECT * INTO TABLE @DATA(lt_webhooks)
+      FROM zzcpi_webhooks
+      WHERE program_id = @sy-repid.
+
+    SELECT * FROM zzslack_webhooks
+      INTO TABLE @DATA(lt_slack)
+      WHERE program_id = @sy-repid.
+
+    CREATE OBJECT:  lo_cpi,
+                    lo_slack.
+
+    SHIFT pv_run_id LEFT DELETING LEADING '0'.
+*  DATA(ld_payload) = | session={ pv_run_id }|.
+    LOOP AT lt_webhooks INTO DATA(lw_webhooks).
+
+      lo_response = lo_cpi->send_http_request(
+        EXPORTING
+          im_url           = lw_webhooks-webhooks    " URL
+          im_method        = 'POST'    " Request Method
+          im_body          = |Session={ pv_run_id }|    " Request Body
+        IMPORTING
+          ex_http_status   = ld_http_status
+          ex_response_text = ld_response
+      ).
+
+      IF ld_http_status NP '2*'. "NOT 2XX status
+        LOOP AT lt_slack INTO DATA(lw_slack).
+          lo_slack->post(
+            im_webhooks = lw_slack-webhooks    " Store Url in Help Menu
+            im_text     = | Alert 2XX when trying to invoke Iflow URL from { sy-repid }, Session = { pv_run_id }|
+          ).
+        ENDLOOP.
+      ENDIF.
+
+    ENDLOOP.
+
+  ENDMETHOD.
+
+  METHOD run_background.
+    CONSTANTS c_jobname TYPE tbtcjob-jobname VALUE 'ZAVALON'.
+    CONSTANTS c_program_name TYPE char25 VALUE 'ZFI_AVALON_JOURNAL_POST'.
+    DATA lv_jobname TYPE btcjob.
+    DATA lv_session TYPE zfava_post_stg-zsession.
+
+    DATA:
+      lv_jobcount TYPE tbtcjob-jobcount.
+
+    IF im_session IS INITIAL.
+      TRY.
+          DATA(lt_source) = get_source_data(
+                              im_session  = im_session
+                              im_filepath = im_filepath
+                              im_bjob     = im_bjob
+                            ).
+          ASSIGN lt_source[ 1 ]-zsession TO FIELD-SYMBOL(<sess>).
+          IF <sess> IS ASSIGNED.
+            lv_session = <sess>.
+          ENDIF.
+        CATCH zcx_data_service.
+          "handle exception
+      ENDTRY.
+    ELSE.
+      lv_session = im_session.
+    ENDIF.
+
+    DATA(lv_session_text) = lv_session.
+
+    SHIFT lv_session_text LEFT DELETING LEADING '0'.
+
+    lv_jobname = |{ c_jobname }_{ lv_session_text }|.
+
+
+    CALL FUNCTION 'JOB_OPEN'
+      EXPORTING
+        jobname          = lv_jobname
+      IMPORTING
+        jobcount         = lv_jobcount
+      EXCEPTIONS
+        cant_create_job  = 1
+        invalid_job_data = 2
+        jobname_missing  = 3
+        OTHERS           = 4.
+
+    IF sy-subrc <> 0.
+      MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+        WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+    ELSE.
+      DATA(lv_test) = COND abap_bool( WHEN im_execute = abap_true
+                                      THEN abap_false
+                                      ELSE abap_true ).
+
+      SUBMIT (c_program_name) AND RETURN
+        VIA JOB lv_jobname
+        NUMBER lv_jobcount
+        WITH p_sess   = lv_session
+        WITH p_path   = im_filepath
+        WITH cb_back  = abap_false " important!!
+        WITH rb_test  = lv_test
+        WITH rb_exec  = im_execute
+        WITH rb_rpt  = im_display_rpt
+        WITH cb_cpi   = im_call_cpi.
+
+      CALL FUNCTION 'JOB_CLOSE'
+        EXPORTING
+          jobcount             = lv_jobcount
+          jobname              = lv_jobname
+          strtimmed            = abap_true
+        EXCEPTIONS
+          cant_start_immediate = 1
+          invalid_startdate    = 2
+          jobname_missing      = 3
+          job_close_failed     = 4
+          job_nosteps          = 5
+          job_notex            = 6
+          lock_failed          = 7
+          invalid_target       = 8
+          invalid_time_zone    = 9
+          OTHERS               = 10.
+
+      IF sy-subrc <> 0.
+        MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+          WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+      ENDIF.
+
+    ENDIF.
+
+    result = lv_jobname.
+
+  ENDMETHOD.
+
+ENDCLASS.
+
+CLASS lcl_template_downloader DEFINITION CREATE PUBLIC.
+
+  PUBLIC SECTION.
+    TYPES: BEGIN OF ty_result,
+             message TYPE string,
+             type    TYPE char1,
+           END OF ty_result.
+    METHODS download RETURNING VALUE(result) TYPE ty_result.
+  PROTECTED SECTION.
+  PRIVATE SECTION.
+    METHODS get_directory
+      RETURNING
+        VALUE(result) TYPE rlgrap-filename.
+
+ENDCLASS.
+
+CLASS lcl_template_downloader IMPLEMENTATION.
+
+  METHOD download.
+
+
+    DATA lv_dir         TYPE rlgrap-filename.
+    DATA ls_wwwdata_tab TYPE wwwdatatab.
+*    DATA lv_message     TYPE string.
+
+*Make sure template exists in SMw0 as binary object
+    SELECT * FROM wwwdata INNER JOIN tadir
+                  ON wwwdata~objid = tadir~obj_name
+                  INTO  CORRESPONDING FIELDS OF ls_wwwdata_tab UP TO 1 ROWS
+                  WHERE wwwdata~srtf2   = 0
+                  AND   wwwdata~relid   = 'MI'
+                  AND   tadir~pgmid     = 'R3TR'
+                  AND   tadir~object    = 'W3MI'
+                  AND   tadir~obj_name  = 'ZXLWB_ZFE_MASS_JOURNAL_UPLOAD'.
+    ENDSELECT.
+
+    lv_dir = get_directory(  ).
+    IF lv_dir IS NOT INITIAL.
+
+      lv_dir = |{ lv_dir }/Mass_Journal_Template.xlsx|.
+
+      CALL FUNCTION 'DOWNLOAD_WEB_OBJECT'
+        EXPORTING
+          key         = ls_wwwdata_tab
+          destination = lv_dir.
+      IF sy-subrc EQ 0.
+        result-message = |Successfully download template { lv_dir }|.
+        result-type = 'S'.
+      ENDIF.
+
+    ELSE.
+      result-message = 'An error has occured picking a folder'.
+      result-type = 'E'.
+
+    ENDIF.
+
+
+  ENDMETHOD.
+
+
+  METHOD get_directory.
+
+    DATA: objfile TYPE REF TO cl_gui_frontend_services.
+    DATA: pickedfolder TYPE string.
+    DATA: initialfolder TYPE string.
+
+    IF sy-batch IS INITIAL.
+      CREATE OBJECT objfile.
+
+      objfile->get_temp_directory( CHANGING   temp_dir              = initialfolder
+                                   EXCEPTIONS cntl_error            = 1
+                                              error_no_gui          = 2
+                                              not_supported_by_gui  = 3 ).
+
+      objfile->directory_browse( EXPORTING  initial_folder        = initialfolder
+                                 CHANGING   selected_folder       = pickedfolder
+                                 EXCEPTIONS cntl_error            = 1
+                                            error_no_gui          = 2
+                                            not_supported_by_gui  = 3 ).
+
+      IF sy-subrc = 0.
+        result = pickedfolder.
+      ENDIF.
+    ENDIF.
+
+  ENDMETHOD.
+
+ENDCLASS.
+
+CLASS lcl_report_displayer DEFINITION CREATE PUBLIC.
+
+  PUBLIC SECTION.
+    METHODS display IMPORTING im_data TYPE REF TO data
+                    RAISING
+                              zcx_data_service.
+  PROTECTED SECTION.
+    TYPES: BEGIN OF ty_alv_column,
+             column_name TYPE lvc_fname,
+             stext       TYPE scrtext_s,
+             mtext       TYPE scrtext_m,
+             ltext       TYPE scrtext_l,
+             hide        TYPE abap_bool,
+             curr        TYPE lvc_fname,
+             uom         TYPE lvc_fname,
+           END OF ty_alv_column,
+
+           ty_t_alv_column TYPE STANDARD TABLE OF ty_alv_column WITH EMPTY KEY.
+
+    METHODS set_header
+      IMPORTING
+        im_count      TYPE i
+        im_o_alv_tab  TYPE REF TO cl_salv_table
+      RETURNING
+        VALUE(result) TYPE REF TO cl_salv_table.
+    METHODS set_screen_status
+      IMPORTING
+        im_o_alv_tab  TYPE REF TO cl_salv_table
+      RETURNING
+        VALUE(result) TYPE REF TO cl_salv_table.
+    METHODS modify_field_optmzd
+      IMPORTING
+        im_o_alv_table TYPE REF TO cl_salv_table
+      RETURNING
+        VALUE(result)  TYPE REF TO cl_salv_table.
+    METHODS modify_field_alv
+      IMPORTING
+        im_o_alv_table TYPE REF TO cl_salv_table
+      RETURNING
+        VALUE(result)  TYPE REF TO cl_salv_table.
+
+    METHODS modify_field_column IMPORTING im_column_spec TYPE ty_alv_column
+                                CHANGING  ch_o_alv_table TYPE REF TO cl_salv_table.
+
+    METHODS modify_field IMPORTING im_column_name TYPE lvc_fname
+                                   im_method      TYPE any
+                                   im_value       TYPE any
+                         CHANGING  ch_o_alv_table TYPE REF TO cl_salv_table.
+
+  PRIVATE SECTION.
+
+ENDCLASS.
+
+CLASS lcl_report_displayer IMPLEMENTATION.
+
+  METHOD display.
+    FIELD-SYMBOLS <data> TYPE lcl_report_data_serv=>ty_t_report.
+    ASSIGN im_data->* TO <data>.
+
+    IF <data> IS INITIAL.
+      RAISE EXCEPTION NEW zcx_data_service( error_msg = `No data found` ).
+    ENDIF.
+
+    SELECT *
+    FROM @<data> AS s
+    ORDER BY session ASCENDING,
+             count ASCENDING
+    INTO TABLE @DATA(lt_data)
+    ##db_feature_mode[itabs_in_from_clause] ##itab_db_select.
+
+    TRY.
+        cl_salv_table=>factory(
+      EXPORTING
+        list_display   = if_salv_c_bool_sap=>false
+      IMPORTING
+        r_salv_table   = DATA(lo_alv_table)
+      CHANGING
+            t_table    = lt_data ).
+
+
+      CATCH cx_salv_msg.
+        "handle exception
+    ENDTRY.
+
+    DATA(lv_count) = REDUCE i( INIT counter TYPE i
+                               FOR <line> IN <data> WHERE ( type = 'E' )
+                               NEXT
+                               counter = counter + 1 ).
+
+    modify_field_alv(
+     modify_field_optmzd(
+      set_screen_status(
+       set_header( im_count = lv_count im_o_alv_tab = lo_alv_table ) ) ) )->display( ).
+
+  ENDMETHOD.
+
+
+  METHOD set_header.
+
+    DATA: lo_header      TYPE REF TO cl_salv_form_layout_grid,
+          lo_header_info TYPE REF TO cl_salv_form_header_info, "#EC NEEDED
+          lo_action_info TYPE REF TO cl_salv_form_action_info. "#EC NEEDED
+
+    lo_header = NEW #(  ).
+
+    lo_header_info = lo_header->create_header_information(
+                       row     = 1
+                       column  = 1
+                       rowspan = 2
+                       text    = 'GO-JEK Indonesia'(007) ).
+
+    lo_action_info = lo_header->create_action_information(
+        row     = 3
+        column  = 1
+        text    = 'Mass Transaction Upload Program Result'(008) ).
+
+    lo_action_info = lo_header->create_action_information(
+        row     = 4
+        column  = 1
+        text    = |Number of error: { im_count }| ).
+
+    lo_action_info = lo_header->create_action_information(
+        row     = 5
+        column  = 1
+        text    = 'Please find error details below:' ).
+
+    result = im_o_alv_tab.
+    result->set_top_of_list( lo_header ).
+    result->set_top_of_list_print( lo_header ).
+
+
+  ENDMETHOD.
+
+
+  METHOD set_screen_status.
+
+    result = im_o_alv_tab.
+    result->set_screen_status(
+      EXPORTING
+        report        = sy-repid
+        pfstatus      = 'ZSTANDARD'
+        set_functions = im_o_alv_tab->c_functions_all ).
+
+  ENDMETHOD.
+
+
+  METHOD modify_field_optmzd.
+
+    result = im_o_alv_table.
+    DATA(lo_alv_columns_table) = result->get_columns( ).
+    lo_alv_columns_table->set_optimize( abap_true ).
+
+
+  ENDMETHOD.
+
+
+  METHOD modify_field_alv.
+
+    result = im_o_alv_table.
+
+    DATA(lt_specs) = VALUE ty_t_alv_column(
+   ( column_name = 'Session' stext = 'Session' mtext = 'Session' ltext = 'Session No' hide = abap_false curr = space uom = space )
+   ( column_name = 'COUNT' stext = 'No' mtext = 'No' ltext = 'No' hide = abap_false curr = space uom = space )
+   ( column_name = 'ELINE' stext = 'Line' mtext = 'Line' ltext = 'Line' hide = abap_true curr = space uom = space )
+   ( column_name = 'BUKRS' stext = 'Company' mtext = 'Company Code' ltext = 'Company Code' hide = abap_false curr = space uom = space )
+   ( column_name = 'BLDAT' stext = 'Doc Date' mtext = 'Document Date' ltext = 'Document Date' hide = abap_false curr = space uom = space )
+   ( column_name = 'BUDAT' stext = 'Post Date' mtext = 'Posting Date' ltext = 'Posting Date' hide = abap_false curr = space uom = space )
+   ( column_name = 'XBLNR' stext = 'Reference' mtext = 'Reference' ltext = 'Reference' hide = abap_false curr = space uom = space )
+   ( column_name = 'BKTXT' stext = 'Header' mtext = 'Header' ltext = 'Header' hide = abap_false curr = space uom = space )
+   ( column_name = 'BLART' stext = 'Doc. Type' mtext = 'Doc. Type' ltext = 'Document Type' hide = abap_false curr = space uom = space )
+   ( column_name = 'WAERS' stext = 'Currency' mtext = 'Currency' ltext = 'Currency' hide = abap_false curr = space uom = space )
+   ( column_name = 'BELNR' stext = 'Number' mtext = 'Doc. Num' ltext = 'Doc. Num' hide = abap_false curr = space uom = space )
+   ( column_name = 'TYPE' stext = 'Type' mtext = 'Type' ltext = 'Type' hide = abap_false curr = space uom = space )
+   ( column_name = 'MESSAGE' stext = 'Message' mtext = 'Message' ltext = 'Message' hide = abap_false curr = space uom = space ) ).
+
+    LOOP AT lt_specs INTO DATA(lwa_spec).
+
+      modify_field_column(
+        EXPORTING
+          im_column_spec = lwa_spec
+        CHANGING
+          ch_o_alv_table = result
+      ).
+
+    ENDLOOP.
+
+  ENDMETHOD.
+
+  METHOD modify_field_column.
+
+    modify_field(
+      EXPORTING
+        im_column_name = im_column_spec-column_name
+        im_method      = 'SET_SHORT_TEXT'
+        im_value       = im_column_spec-stext
+      CHANGING
+        ch_o_alv_table = ch_o_alv_table ).
+
+    modify_field(
+      EXPORTING
+        im_column_name = im_column_spec-column_name
+        im_method      = 'SET_MEDIUM_TEXT'
+        im_value       = im_column_spec-mtext
+      CHANGING
+        ch_o_alv_table = ch_o_alv_table ).
+
+    modify_field(
+      EXPORTING
+        im_column_name = im_column_spec-column_name
+        im_method      = 'SET_LONG_TEXT'
+        im_value       = im_column_spec-ltext
+      CHANGING
+        ch_o_alv_table = ch_o_alv_table ).
+
+    modify_field(
+      EXPORTING
+        im_column_name = im_column_spec-column_name
+        im_method      = 'SET_TECHNICAL'
+        im_value       = im_column_spec-hide
+      CHANGING
+        ch_o_alv_table = ch_o_alv_table ).
+
+    IF im_column_spec-curr IS NOT INITIAL.
+      modify_field(
+        EXPORTING
+          im_column_name = im_column_spec-column_name
+          im_method      = 'SET_CURRENCY_COLUMN'
+          im_value       = im_column_spec-curr
+        CHANGING
+          ch_o_alv_table = ch_o_alv_table ).
+
+    ENDIF.
+
+    IF im_column_spec-uom IS NOT INITIAL.
+      modify_field(
+        EXPORTING
+          im_column_name = im_column_spec-column_name
+          im_method      = 'SET_QUANTITY_COLUMN'
+          im_value       = im_column_spec-uom
+        CHANGING
+          ch_o_alv_table = ch_o_alv_table ).
+
+    ENDIF.
+
+  ENDMETHOD.
+
+  METHOD modify_field.
+
+    DATA(lo_alv_column_table) = ch_o_alv_table->get_columns( ).
+    TRY.
+        DATA(lo_alv_column) = lo_alv_column_table->get_column( im_column_name ).
+        IF lo_alv_column IS NOT INITIAL.
+          CALL METHOD lo_alv_column->(im_method)
+            EXPORTING
+              value = im_value.
+
+        ENDIF.
+      CATCH cx_salv_not_found.
+        "handle exception
+    ENDTRY.
+
+  ENDMETHOD.
+
+ENDCLASS.
+
+CLASS lcl_report_displayer2 DEFINITION
+CREATE PUBLIC
+INHERITING FROM lcl_report_displayer.
+
+  PUBLIC SECTION.
+    METHODS display REDEFINITION.
+  PROTECTED SECTION.
+    METHODS modify_field_alv REDEFINITION.
+  PRIVATE SECTION.
+
+ENDCLASS.
+
+CLASS lcl_report_displayer2 IMPLEMENTATION.
+
+  METHOD modify_field_alv.
+
+   result = im_o_alv_table.
+
+  ENDMETHOD.
+
+  METHOD display.
+
+    FIELD-SYMBOLS <data> TYPE zcl_ava_log_repository=>ty_source-t_log_header.
+    ASSIGN im_data->* TO <data>.
+
+    IF <data> IS INITIAL.
+      RAISE EXCEPTION NEW zcx_data_service( error_msg = `No data found` ).
+    ENDIF.
+
+    SELECT *
+    FROM @<data> AS s
+    ORDER BY zsession ASCENDING,
+             zcount ASCENDING
+    INTO TABLE @DATA(lt_data)
+    ##db_feature_mode[itabs_in_from_clause] ##itab_db_select.
+
+    TRY.
+        cl_salv_table=>factory(
+      EXPORTING
+        list_display   = if_salv_c_bool_sap=>false
+      IMPORTING
+        r_salv_table   = DATA(lo_alv_table)
+      CHANGING
+            t_table    = lt_data ).
+
+
+      CATCH cx_salv_msg.
+        "handle exception
+    ENDTRY.
+
+    DATA(lv_count) = REDUCE i( INIT counter TYPE i
+                               FOR <line> IN <data> WHERE ( type = 'E' )
+                               NEXT
+                               counter = counter + 1 ).
+
+    modify_field_alv(
+     modify_field_optmzd(
+      set_screen_status(
+       set_header( im_count = lv_count im_o_alv_tab = lo_alv_table ) ) ) )->display( ).
+
+  ENDMETHOD.
+
+ENDCLASS.
+*----------------------------------------------------------------------*
+* I N T E R N A L   T A B L E S   &   W O R K I N G - A R E A S
+*----------------------------------------------------------------------*
+*DATA:
+*  it_xxxxx  TYPE ty_t_xxxxx.
+
+*DATA:
+*  wa_xxxxx  TYPE ty_xxxxx.
+
+*----------------------------------------------------------------------*
+* G L O B A L   V A R I A B L E S
+*----------------------------------------------------------------------*
+DATA:
+  lwa_nriv  TYPE nriv_iv.
+
+*----------------------------------------------------------------------*
+* R A N G E S
+*----------------------------------------------------------------------*
+*DATA:
+*  r_xxxxx  TYPE ty_r_xxxxx.
+
+*----------------------------------------------------------------------*
+* C O N S T A N T S
+*----------------------------------------------------------------------*
+*CONSTANTS:
+*  c_xxxxx  TYPE xxxx-xxxxx VALUE 'XXX'.
+
+*----------------------------------------------------------------------*
+* S E L E C T I O N - S C R E E N
+*----------------------------------------------------------------------*
+SELECTION-SCREEN BEGIN OF BLOCK b01 WITH FRAME TITLE TEXT-b01. "General Selection
+  SELECT-OPTIONS: so_sess FOR lwa_nriv-nrlevel MODIF ID gs0,
+                  so_bukrs FOR zfava_log_h-bukrs MODIF ID gs0,
+                  so_belnr FOR zfava_log_h-belnr MODIF ID gs0,
+                  so_budat FOR zfava_log_h-budat MODIF ID gs0.
+  PARAMETERS:
+    p_sess  TYPE nriv_iv-nrlevel    MODIF ID gs1,       "Background Session
+    p_path  TYPE rlgrap-filename    MODIF ID gs2,     "File Path String
+    cb_back AS CHECKBOX DEFAULT ''  MODIF ID gs3.     "Run Background Job
+SELECTION-SCREEN END OF BLOCK b01.
+SELECTION-SCREEN BEGIN OF BLOCK b03 WITH FRAME TITLE TEXT-b03. "Processing Mode
+  PARAMETERS:
+    rb_test RADIOBUTTON GROUP rb2 USER-COMMAND sp2 DEFAULT 'X',   "Test Run
+    rb_exec RADIOBUTTON GROUP rb2,                    "Execute
+    rb_rpt  RADIOBUTTON GROUP rb2.                    "Display Report
+SELECTION-SCREEN END OF BLOCK b03.
+
+*SELECTION-SCREEN BEGIN OF BLOCK b04 WITH FRAME TITLE TEXT-b04. "Processing Mode
+*  PARAMETERS:
+*    cb_taxin AS CHECKBOX DEFAULT '' NO-DISPLAY.
+*SELECTION-SCREEN END OF BLOCK b04.
+PARAMETERS: cb_cpi AS CHECKBOX DEFAULT '' MODIF ID nd1.
+
+"Notes
+SELECTION-SCREEN BEGIN OF LINE.
+  SELECTION-SCREEN POSITION 1.
+  SELECTION-SCREEN COMMENT 1(79) TEXT-004.
+SELECTION-SCREEN END OF LINE.
+"- Please ensure the input file is in Microsoft Excel format
+SELECTION-SCREEN BEGIN OF LINE.
+  SELECTION-SCREEN POSITION 1.
+  SELECTION-SCREEN COMMENT 1(79) TEXT-001.
+SELECTION-SCREEN END OF LINE.
+"- Please check data format and content before uploading
+SELECTION-SCREEN BEGIN OF LINE.
+  SELECTION-SCREEN POSITION 1.
+  SELECTION-SCREEN COMMENT 1(79) TEXT-002.
+SELECTION-SCREEN END OF LINE.
+"- Close the input file before executing the program
+SELECTION-SCREEN BEGIN OF LINE.
+  SELECTION-SCREEN POSITION 1.
+  SELECTION-SCREEN COMMENT 1(79) TEXT-003.
+SELECTION-SCREEN END OF LINE.
+*"- Generation of Tax Number is exclusive to ODO interface
+*SELECTION-SCREEN BEGIN OF LINE.
+*  SELECTION-SCREEN POSITION 1.
+*  SELECTION-SCREEN COMMENT 1(79) TEXT-032.
+*SELECTION-SCREEN END OF LINE.
+
+SELECTION-SCREEN FUNCTION KEY 1.
+
+*----------------------------------------------------------------------*
+* I N I T I A L I Z A T I O N
+*----------------------------------------------------------------------*
+INITIALIZATION.
+
+  MOVE 'Download Template' TO sscrfields-functxt_01.
+
+*----------------------------------------------------------------------*
+* A T   S E L E C T I O N - S C R E E N
+*----------------------------------------------------------------------*
+AT SELECTION-SCREEN.
+
+  CASE sy-ucomm.
+    WHEN 'FC01'.
+      DATA(return_message) = NEW lcl_template_downloader( )->download( ).
+      MESSAGE return_message-message TYPE 'S'.
+  ENDCASE.
+
+AT SELECTION-SCREEN OUTPUT.
+  LOOP AT SCREEN.
+
+    IF rb_rpt = abap_true.
+      CASE screen-group1.
+        WHEN 'GS0'.
+          screen-active = 1.
+          screen-input = 1.
+          MODIFY SCREEN.
+        WHEN 'GS1'.
+          screen-active = 0.
+          screen-input = 0.
+          MODIFY SCREEN.
+        WHEN 'GS2'.
+          screen-active = 0.
+          screen-input = 0.
+          MODIFY SCREEN.
+        WHEN 'GS3'.
+          screen-active = 0.
+          MODIFY SCREEN.
+      ENDCASE.
+    ELSE.
+*      CLEAR p_sess.
+      CLEAR so_sess.
+      REFRESH so_sess.
+      CASE screen-group1.
+        WHEN 'GS0'.
+          screen-active = 0.
+          screen-input = 1.
+          MODIFY SCREEN.
+        WHEN 'GS1'.
+          screen-active = 0.
+          screen-input = 1.
+          MODIFY SCREEN.
+        WHEN 'GS2'.
+          screen-input = 1.
+          MODIFY SCREEN.
+        WHEN 'GS3'.
+          screen-active = 1.
+          MODIFY SCREEN.
+      ENDCASE.
+
+    ENDIF.
+
+    IF screen-group1 = 'ND1'.
+      screen-invisible = 1.
+      MODIFY SCREEN.
+
+    ENDIF.
+
+  ENDLOOP.
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_path.
+* Get file location
+  p_path = NEW lcl_file_reader( )->get_file_location( ).
+
+*----------------------------------------------------------------------*
+* S T A R T - O F - S E L E C T I O N
+*----------------------------------------------------------------------*
+START-OF-SELECTION.
+  IF cb_back = abap_true.
+    DATA(lv_jobname) = lcl_main=>create( )->run_background(
+                                           im_t_sess_range = so_sess[]
+                                           im_session      = p_sess
+                                           im_filepath     = p_path
+                                           im_bjob         = cb_back
+                                           im_tax_inv      = abap_false
+                                           im_execute      = rb_exec
+                                           im_display_rpt  = rb_rpt
+                                           im_call_cpi     = cb_cpi
+                                         ).
+    MESSAGE |Background job { lv_jobname } has been created| TYPE 'S'.
+    LEAVE LIST-PROCESSING.
+
+
+  ELSE.
+
+    TRY.
+        DATA(lt_report) = lcl_main=>create( )->run(
+                                              im_t_sess_range = so_sess[]
+                                              im_t_compcode_r = so_bukrs[]
+                                              im_t_docnum_r = so_belnr[]
+                                              im_t_postdate_r = so_budat[]
+                                              im_session  = p_sess
+                                              im_filepath = p_path
+                                              im_bjob     = cb_back
+                                              im_tax_inv  = abap_false"cb_taxin
+                                              im_execute  = rb_exec
+                                              im_display_rpt = rb_rpt
+                                              im_call_cpi = cb_cpi ).
+
+
+      CATCH zcx_data_service INTO DATA(error_msg).
+        MESSAGE error_msg->get_error_msg( ) TYPE 'S' DISPLAY LIKE 'E'.
+        LEAVE LIST-PROCESSING.
+    ENDTRY.
+
+  ENDIF.
+
+
+*----------------------------------------------------------------------*
+* E N D - O F - S E L E C T I O N
+*----------------------------------------------------------------------*
+END-OF-SELECTION.
+
+  IF cb_back = abap_true.
+    MESSAGE 'Background Job Released' TYPE 'S' DISPLAY LIKE 'E'.
+    LEAVE LIST-PROCESSING.
+  ELSE.
+    TRY.
+
+        NEW lcl_report_displayer2( )->display( lt_report ).
+      CATCH zcx_data_service INTO error_msg.
+        MESSAGE error_msg->get_error_msg( ) TYPE 'S' DISPLAY LIKE 'E'.
+        LEAVE LIST-PROCESSING.
+
+    ENDTRY.
+
+  ENDIF.
+
+
+
+*----------------------------------------------------------------------*
+* T O P - O F - P A G E
+*----------------------------------------------------------------------*
+TOP-OF-PAGE.
+*----------------------------------------------------------------------*
+* E N D - O F - P A G E
+*----------------------------------------------------------------------*
+END-OF-PAGE.
+*----------------------------------------------------------------------*
+* S U B - R O U T I N E S
+*----------------------------------------------------------------------*
+*FORM f_xxxxx USING    pp_xxxxx   TYPE xxxx-xxxxx
+*             CHANGING pit_xxxxx  TYPE ty_t_xxxxx
+*                      pso_xxxxx  TYPE ty_r_xxxxx.
+*ENDFORM.
+
+*----------------------------------------------------------------------*
+* U N I T  T E S T
+*----------------------------------------------------------------------*
+CLASS ltcl_posting_data_serv DEFINITION FINAL FOR TESTING
+  DURATION SHORT
+  RISK LEVEL HARMLESS.
+
+  PRIVATE SECTION.
+    DATA cut TYPE REF TO zif_data_service.
+    METHODS:
+      check_accountgl FOR TESTING RAISING cx_static_check,
+      check_currency FOR TESTING RAISING cx_static_check,
+      check_criteria FOR TESTING RAISING cx_static_check,
+      initial_extension FOR TESTING RAISING cx_static_check,
+      initial_extension2 FOR TESTING RAISING cx_static_check,
+      setup.
+ENDCLASS.
+
+
+CLASS ltcl_posting_data_serv IMPLEMENTATION.
+
+  METHOD setup.
+
+    cut = NEW lcl_posting_data_service( ).
+
+  ENDMETHOD.
+
+  METHOD check_accountgl.
+    FIELD-SYMBOLS <result> TYPE lcl_posting_repo=>ty_bapi_doc_post.
+    " given
+    DATA(lt_data) = VALUE zcl_ava_stg_repo=>ty_t_stg(
+     ( buzei = 0 bukrs = 'ID34' bldat = '20221201' budat = '20221201' bktxt = 'RPYMNT' blart = 'SA' waers = 'IDR' )
+     ( buzei = 1 hkont = '1030700004' wrbtr = '500.00' sgtxt = 'RPYMNT' )
+     ( buzei = 2 hkont = '4090101008' wrbtr = '-500.00' werks = '3400' sgtxt = 'RPYMNT' prctr = 'ID34MGMT00' ) ).
+
+    " when
+    DATA(result) = cut->generate_data( VALUE lcl_posting_data_service=>ty_source_data( t_data = lt_data ) ).
+    ASSIGN result->* TO <result>.
+
+    DATA(exp) = VALUE lcl_posting_repo=>ty_bapi_doc_post-t_accountgl(
+     ( itemno_acc = 1 gl_account = '1030700004' item_text = 'RPYMNT' )
+     ( itemno_acc = 2 gl_account = '4090101008' item_text = 'RPYMNT' profit_ctr = 'ID34MGMT00' ) ).
+
+    " then
+    cl_abap_unit_assert=>assert_equals( exp = exp
+                                        act = <result>-t_accountgl ).
+
+  ENDMETHOD.
+
+  METHOD check_currency.
+    FIELD-SYMBOLS <result> TYPE lcl_posting_repo=>ty_bapi_doc_post.
+    " given
+    DATA(lt_data) = VALUE zcl_ava_stg_repo=>ty_t_stg(
+     ( buzei = 0 bukrs = 'ID34' bldat = '20221201' budat = '20221201' bktxt = 'RPYMNT' blart = 'SA' waers = 'IDR' )
+     ( buzei = 1 hkont = '1030700004' wrbtr = '500.00' sgtxt = 'RPYMNT' )
+     ( buzei = 2 hkont = '4090101008' wrbtr = '-500.00' werks = '3400' sgtxt = 'RPYMNT' prctr = 'ID34MGMT00' ) ).
+
+    " when
+    DATA(result) = cut->generate_data( VALUE lcl_posting_data_service=>ty_source_data( t_data = lt_data ) ).
+    ASSIGN result->* TO <result>.
+
+    DATA(exp) = VALUE lcl_posting_repo=>ty_bapi_doc_post-t_currency(
+     ( itemno_acc = 1 curr_type = '00' currency = 'IDR' amt_doccur = '500.00' )
+     ( itemno_acc = 2 curr_type = '00' currency = 'IDR' amt_doccur = '-500.00' ) ).
+
+    " then
+    cl_abap_unit_assert=>assert_equals( exp = exp
+                                        act = <result>-t_currency ).
+
+
+  ENDMETHOD.
+
+  METHOD check_criteria.
+
+    FIELD-SYMBOLS <result> TYPE lcl_posting_repo=>ty_bapi_doc_post.
+    " given
+    DATA(lt_data) = VALUE zcl_ava_stg_repo=>ty_t_stg(
+     ( buzei = 0 bukrs = 'ID34' bldat = '20221201' budat = '20221201' bktxt = 'RPYMNT' blart = 'SA' waers = 'IDR' )
+     ( buzei = 1 hkont = '1030700004' wrbtr = '500.00' sgtxt = 'RPYMNT' )
+     ( buzei = 2 hkont = '4090101008' wrbtr = '-500.00' werks = '3400' sgtxt = 'RPYMNT' prctr = 'ID34MGMT00' ) ).
+
+    " when
+    DATA(result) = cut->generate_data( VALUE lcl_posting_data_service=>ty_source_data( t_data = lt_data ) ).
+    ASSIGN result->* TO <result>.
+
+    DATA(exp) = VALUE lcl_posting_repo=>ty_bapi_doc_post-t_criteria(
+     ( itemno_acc = 2 fieldname = 'WERKS' character = '3400' ) ).
+
+    " then
+    cl_abap_unit_assert=>assert_equals( exp = exp
+                                        act = <result>-t_criteria ).
+
+  ENDMETHOD.
+
+  METHOD initial_extension.
+
+    FIELD-SYMBOLS <result> TYPE lcl_posting_repo=>ty_bapi_doc_post.
+    " given
+    DATA(lt_data) = VALUE zcl_ava_stg_repo=>ty_t_stg(
+     ( buzei = 0 bukrs = 'ID34' bldat = '20221201' budat = '20221201' bktxt = 'RPYMNT' blart = 'SA' waers = 'IDR' )
+     ( buzei = 1 hkont = '1030700004' wrbtr = '500.00' sgtxt = 'RPYMNT' )
+     ( buzei = 2 hkont = '4090101008' wrbtr = '-500.00' werks = '3400' sgtxt = 'RPYMNT' prctr = 'ID34MGMT00' ) ).
+
+    " when
+    DATA(result) = cut->generate_data( VALUE lcl_posting_data_service=>ty_source_data( t_data = lt_data ) ).
+    ASSIGN result->* TO <result>.
+
+    cl_abap_unit_assert=>assert_initial( act = <result>-t_extension ).
+
+  ENDMETHOD.
+
+  METHOD initial_extension2.
+
+    FIELD-SYMBOLS <result> TYPE lcl_posting_repo=>ty_bapi_doc_post.
+    " given
+    DATA(lt_data) = VALUE zcl_ava_stg_repo=>ty_t_stg(
+     ( buzei = 0 bukrs = 'ID34' bldat = '20221201' budat = '20221201' bktxt = 'RPYMNT' blart = 'SA' waers = 'IDR' )
+     ( buzei = 1 hkont = '1030700004' wrbtr = '500.00' sgtxt = 'RPYMNT' )
+     ( buzei = 2 hkont = '4090101008' wrbtr = '-500.00' werks = '3400' sgtxt = 'RPYMNT' prctr = 'ID34MGMT00' ) ).
+
+    " when
+    DATA(result) = cut->generate_data( VALUE lcl_posting_data_service=>ty_source_data( t_data = lt_data ) ).
+    ASSIGN result->* TO <result>.
+
+    cl_abap_unit_assert=>assert_initial( act = <result>-t_extension2 ).
+
+  ENDMETHOD.
+
+ENDCLASS.

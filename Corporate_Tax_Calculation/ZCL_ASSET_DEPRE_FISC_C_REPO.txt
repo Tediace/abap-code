@@ -1,0 +1,100 @@
+CLASS zcl_asset_depre_fisc_c_repo DEFINITION
+  PUBLIC
+  FINAL
+  CREATE PUBLIC .
+
+  PUBLIC SECTION.
+    INTERFACES zif_asset_depre_fisc_c_repo.
+  PROTECTED SECTION.
+  PRIVATE SECTION.
+    DATA mo_data_service TYPE REF TO lif_data_service.
+ENDCLASS.
+
+
+
+CLASS zcl_asset_depre_fisc_c_repo IMPLEMENTATION.
+  METHOD zif_asset_depre_fisc_c_repo~find_source_data.
+    DATA lo_data_service TYPE REF TO lif_data_service.
+
+    IF mo_data_service IS BOUND.
+      lo_data_service = mo_data_service.
+    ELSE.
+      lo_data_service = NEW lcl_data_service( ).
+    ENDIF.
+
+    " Asset Depreciation Source
+
+    SELECT ktnafg,
+           s~bukrs,
+           s~anln1,
+           s~anln2,
+           s~afabe,
+           afabg,
+           afasl,
+           ndjar,
+           ndper,
+           vyear,
+           vmnth,
+           inbda,
+           deakt_b,
+           ( CAST( ndjar AS INT1 ) * 12 ) + CAST( ndper AS INT1 )
+              AS asset_useful_life_month,
+           c~anlkl,
+           d~ktogr,
+           ktopl
+    FROM anlb AS s
+    INNER JOIN anla AS c ON s~bukrs = c~bukrs
+                        AND s~anln1 = c~anln1
+                        AND s~anln2 = c~anln2
+    INNER JOIN anka AS d ON c~anlkl = d~anlkl
+    INNER JOIN t095b AS e ON e~ktopl = 'GO00'
+                         AND e~ktogr = d~ktogr
+    WHERE s~bukrs = @companycode
+      AND s~afabe = '02'
+      AND afasl = 'ZLIN'
+      AND afabg IS NOT INITIAL
+      AND inbda IS NOT INITIAL
+      AND deakt_b IS INITIAL
+      AND ktnafg IN @gl_accounts_range
+    INTO TABLE @DATA(assets_depre_source).
+
+    " Asset Tax Depreciation Balance
+
+    SELECT s~bukrs,
+           s~anln1,
+           s~anln2,
+           b~gjahr,
+           b~afabe,
+           b~NDABJ,
+           b~NDABP,
+           kansw,
+           nafap,
+           aafap,
+           answl,
+           bzdat
+    FROM @assets_depre_source AS s
+    INNER JOIN anlc AS b ON b~bukrs = s~bukrs
+                        AND b~gjahr = @fiscal_year
+                        AND b~anln1 = s~anln1
+                        AND b~anln2 = s~anln2
+                        AND b~afabe = '02'
+                        AND CAST( CAST( b~ndabj as INT1 ) * 12 +
+                                  CAST( b~ndabp as INT1 ) as INT1 ) < s~asset_useful_life_month
+    LEFT OUTER JOIN anep AS v ON b~bukrs = v~bukrs
+                        AND b~gjahr = v~gjahr
+                        AND b~anln1 = v~anln1
+                        AND b~anln2 = v~anln2
+                        AND b~afabe = v~afabe
+                        AND v~lnsan is initial
+    INTO TABLE @DATA(asset_tax_depre_bal).
+
+    result = lo_data_service->get_currentyear_assettax_depre(
+               source            = CORRESPONDING #( assets_depre_source )
+               tax_depre_balance = CORRESPONDING #( asset_tax_depre_bal )
+               periods_range     = periods_range
+               fiscal_year       = fiscal_year
+             ).
+
+  ENDMETHOD.
+
+ENDCLASS.

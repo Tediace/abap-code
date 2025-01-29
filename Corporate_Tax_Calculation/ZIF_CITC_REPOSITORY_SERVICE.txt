@@ -1,0 +1,47 @@
+INTERFACE zif_citc_repository_service
+  PUBLIC .
+  TYPES: BEGIN OF ty_unaudited_balance,
+           ryear         TYPE gjahr,
+           racct         TYPE saknr,
+           rbukrs        TYPE bukrs,
+           unaudited_bal TYPE hslxx,
+         END OF ty_unaudited_balance,
+
+         ty_t_unaudited_balance TYPE STANDARD TABLE OF ty_unaudited_balance WITH EMPTY KEY.
+
+  TYPES: BEGIN OF ty_amount_in_local_curr,
+           ryear  TYPE gjahr,
+           racct  TYPE saknr,
+           rbukrs TYPE bukrs,
+           hsl01  TYPE hslxx,
+           hsl02  TYPE hslxx,
+           hsl03  TYPE hslxx,
+           hsl04  TYPE hslxx,
+           hsl05  TYPE hslxx,
+           hsl06  TYPE hslxx,
+           hsl07  TYPE hslxx,
+           hsl08  TYPE hslxx,
+           hsl09  TYPE hslxx,
+           hsl10  TYPE hslxx,
+           hsl11  TYPE hslxx,
+           hsl12  TYPE hslxx,
+           hsl13  TYPE hslxx,
+           hsl14  TYPE hslxx,
+           hsl15  TYPE hslxx,
+           hsl16  TYPE hslxx,
+         END OF ty_amount_in_local_curr,
+
+         ty_t_amt_in_local_curr TYPE STANDARD TABLE OF ty_amount_in_local_curr WITH EMPTY KEY.
+
+  TYPES ty_t_period_range TYPE RANGE OF poper.
+  TYPES ty_t_period TYPE STANDARD TABLE OF numc2 WITH EMPTY KEY.
+
+
+  METHODS calculate_amt_in_local_curr IMPORTING source_data   TYPE ty_t_amt_in_local_curr
+                                                periods       TYPE ty_t_period
+                                      RETURNING VALUE(result) TYPE ty_t_unaudited_balance.
+
+  METHODS generate_period IMPORTING period_range TYPE ty_t_period_range
+                          RETURNING VALUE(result) TYPE ty_t_period.
+
+ENDINTERFACE.

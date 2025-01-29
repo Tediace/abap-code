@@ -1,0 +1,53 @@
+@EndUserText.label : 'Corporate Income Tax Calculation Report'
+@AbapCatalog.enhancementCategory : #NOT_EXTENSIBLE
+define structure zst_citc_report {
+  @EndUserText.label : 'Level 1'
+  level1                      : abap.char(20);
+  @EndUserText.label : 'Level 2'
+  level2                      : abap.char(20);
+  @EndUserText.label : 'Level 3'
+  level3                      : abap.char(20);
+  @EndUserText.label : 'Level 4'
+  level4                      : abap.char(20);
+  @EndUserText.label : 'Level 5'
+  level5                      : abap.char(20);
+  @EndUserText.label : 'G\L Account'
+  gl_account                  : abap.char(10);
+  @EndUserText.label : 'G\L Account Description'
+  gl_account_description      : abap.sstring(50);
+  @EndUserText.label : 'Currency'
+  currency                    : abap.cuky;
+  @EndUserText.label : 'Unaudited Balance'
+  @Semantics.amount.currencyCode : 'zst_citc_report.currency'
+  unaudited_balance           : abap.curr(23,2);
+  @EndUserText.label : 'Adjustment Dr'
+  @Semantics.amount.currencyCode : 'zst_citc_report.currency'
+  adjustment_debit            : abap.curr(23,2);
+  @EndUserText.label : 'Adjustment Cr'
+  @Semantics.amount.currencyCode : 'zst_citc_report.currency'
+  adjustment_credit           : abap.curr(23,2);
+  @EndUserText.label : 'Unaudited Balance After Adjustment'
+  @Semantics.amount.currencyCode : 'zst_citc_report.currency'
+  audited_balance             : abap.curr(23,2);
+  @EndUserText.label : 'Permanent'
+  @Semantics.amount.currencyCode : 'zst_citc_report.currency'
+  fiscal_correction_permanent : abap.curr(23,2);
+  @EndUserText.label : 'Timing'
+  @Semantics.amount.currencyCode : 'zst_citc_report.currency'
+  fiscal_correction_timing    : abap.curr(23,2);
+  @EndUserText.label : 'Fiscal Balance'
+  @Semantics.amount.currencyCode : 'zst_citc_report.currency'
+  fiscal_balance              : abap.curr(23,2);
+  @EndUserText.label : 'Remarks'
+  remarks                     : abap.sstring(50);
+  @EndUserText.label : '1771-Ia'
+  mapping_cit_return_1771_ia  : abap.char(10);
+  @EndUserText.label : '1771-I'
+  mapping_cit_return_1771_i   : abap.char(10);
+  @EndUserText.label : '1771-II'
+  mapping_cit_return_1771_ii  : abap.char(10);
+  is_correction_permanent     : abap.char(1);
+  is_correction_timing        : abap.char(1);
+  correction_formula          : abap.numc(2);
+
+}

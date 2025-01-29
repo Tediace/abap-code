@@ -1,0 +1,89 @@
+CLASS zcl_ava_stg_repo DEFINITION
+  PUBLIC
+  CREATE PUBLIC
+  INHERITING FROM zcl_repository_abstract .
+
+  PUBLIC SECTION.
+    TYPES ty_t_stg TYPE STANDARD TABLE OF zfava_post_stg WITH EMPTY KEY.
+    METHODS zif_repository~create REDEFINITION.
+    METHODS zif_repository~read REDEFINITION.
+    METHODS zif_repository~delete REDEFINITION.
+  PROTECTED SECTION.
+    METHODS generate_session RETURNING VALUE(result) TYPE zfava_post_stg-zsession.
+  PRIVATE SECTION.
+ENDCLASS.
+
+
+
+CLASS zcl_ava_stg_repo IMPLEMENTATION.
+  METHOD zif_repository~create.
+
+    FIELD-SYMBOLS <data> TYPE ty_t_stg.
+    ASSIGN im_data TO <data>.
+*    DATA(lv_session) = generate_session(  ).
+*    DATA(lt_data) = VALUE ty_t_stg( FOR line IN <data>
+*                                   ( zsession = lv_session ) ).
+*
+*
+*    MODIFY zfava_post_stg FROM TABLE lt_data.
+*
+*    COMMIT WORK AND WAIT.
+*
+*    result = NEW ty_t_stg(  ).
+*    ASSIGN result->* TO FIELD-SYMBOL(<result>).
+*    <result> = lt_data.
+
+
+    MODIFY zfava_post_stg FROM TABLE <data>.
+
+    COMMIT WORK AND WAIT.
+
+    result = NEW ty_t_stg(  ).
+    ASSIGN result->* TO FIELD-SYMBOL(<result>).
+    <result> = <data>.
+
+  ENDMETHOD.
+
+  METHOD zif_repository~read.
+
+    FIELD-SYMBOLS <result> TYPE ty_t_stg.
+
+    ASSIGN im_data TO FIELD-SYMBOL(<session>).
+    result = NEW ty_t_stg(  ).
+    ASSIGN result->* TO <result>.
+
+    CHECK <session> IS ASSIGNED.
+
+    SELECT *
+    FROM zfava_post_stg
+    WHERE zsession = @<session>
+    INTO TABLE @<result>.
+
+  ENDMETHOD.
+
+  METHOD generate_session.
+
+  ENDMETHOD.
+
+  METHOD zif_repository~delete.
+
+    FIELD-SYMBOLS <result> TYPE ty_t_stg.
+
+    ASSIGN im_data TO FIELD-SYMBOL(<session>).
+    result = NEW ty_t_stg(  ).
+    ASSIGN result->* TO <result>.
+
+    CHECK <session> IS ASSIGNED.
+
+    DELETE FROM zfava_post_stg WHERE zsession = @<session>.
+    IF sy-subrc = 0.
+      COMMIT WORK AND WAIT.
+
+    ELSE.
+      ROLLBACK WORK.
+
+    ENDIF.
+
+  ENDMETHOD.
+
+ENDCLASS.

@@ -1,0 +1,123 @@
+CLASS zcl_citc_repository DEFINITION
+  PUBLIC
+  FINAL
+  CREATE PUBLIC .
+
+  PUBLIC SECTION.
+    INTERFACES zif_citc_repository.
+    METHODS constructor IMPORTING io_service TYPE REF TO zif_citc_repository_service.
+  PROTECTED SECTION.
+  PRIVATE SECTION.
+    DATA service TYPE REF TO zif_citc_repository_service.
+ENDCLASS.
+
+
+
+CLASS zcl_citc_repository IMPLEMENTATION.
+  METHOD zif_citc_repository~find_source_data.
+    TYPES ty_t_saknr_range TYPE RANGE OF saknr.
+
+     DATA(whitelisted_gl_acc) = VALUE ty_t_saknr_range( ( sign = 'I'
+                                                          option = 'BT'
+                                                          low = '4*'
+                                                          high = '8*' ) ).
+
+    " get G/L accounts
+    SELECT saknr
+    FROM ska1
+    WHERE ktopl = 'GO00'
+      AND saknr IN @gl_accounts
+      AND xbilk <> 'X'
+    INTO TABLE @DATA(gl_accounts_input).
+
+    SELECT saknr
+    FROM @gl_accounts_input as s
+    WHERE saknr IN @whitelisted_gl_acc
+    INTO TABLE @gl_accounts_input.
+
+
+    " get unaudited balance
+    " get amounts in local currency
+
+    SELECT ryear,
+           racct,
+           rbukrs,
+           SUM( hsl01 ) AS hsl01,
+           SUM( hsl02 ) AS hsl02,
+           SUM( hsl03 ) AS hsl03,
+           SUM( hsl04 ) AS hsl04,
+           SUM( hsl05 ) AS hsl05,
+           SUM( hsl06 ) AS hsl06,
+           SUM( hsl07 ) AS hsl07,
+           SUM( hsl08 ) AS hsl08,
+           SUM( hsl09 ) AS hsl09,
+           SUM( hsl10 ) AS hsl10,
+           SUM( hsl11 ) AS hsl11,
+           SUM( hsl12 ) AS hsl12,
+           SUM( hsl13 ) AS hsl13,
+           SUM( hsl14 ) AS hsl14,
+           SUM( hsl15 ) AS hsl15,
+           SUM( hsl16 ) AS hsl16
+    FROM v_faglflext_view as s
+    INNER JOIN @gl_accounts_input as g ON s~racct = g~saknr
+    WHERE ryear = @fiscal_year
+*      AND racct IN @gl_accounts
+      AND rbukrs = @companycode
+    GROUP BY ryear,
+             racct,
+             rbukrs
+    INTO TABLE @DATA(amounts_in_local_currency).
+
+    " get unaudited balance based on period
+    DATA(unaudited_balance) = service->calculate_amt_in_local_curr(
+                                source_data  = amounts_in_local_currency
+                                periods = service->generate_period( periods )
+                              ).
+
+    DATA(local_currency) = zif_citc_repository~find_local_curr( companycode ).
+
+    " get the rest data
+    SELECT rbukrs AS companycode,
+           ryear AS fiscal_year,
+           racct AS gl_account,
+           txt50 AS gl_account_desc,
+           @local_currency AS currency,
+           unaudited_bal AS unaudited_balance,
+           permanent_difference AS is_permanent,
+           timing_difference AS is_timing,
+           formula,
+           return_1771_ia,
+           return_1771_i,
+           return_1771_ii
+    FROM @unaudited_balance AS s
+    LEFT OUTER JOIN skat AS t ON t~saknr = s~racct
+                        AND t~spras = 'E'
+                        AND t~ktopl = 'GO00'
+    LEFT OUTER JOIN zfcit_map_fiscal AS f ON s~racct = f~gl_account
+    LEFT OUTER JOIN zfcit_map_return AS r ON s~racct = r~gl_account
+*    WHERE s~unaudited_bal is not initial
+*    WHERE racct IN @whitelisted_gl_acc
+    INTO TABLE @result.
+
+
+  ENDMETHOD.
+
+  METHOD constructor.
+
+    service = io_service.
+    IF service IS NOT BOUND.
+      service = NEW zcl_citc_repository_service( ).
+    ENDIF.
+
+  ENDMETHOD.
+
+  METHOD zif_citc_repository~find_local_curr.
+
+    SELECT SINGLE waers
+    FROM t001
+    WHERE bukrs = @companycode
+    INTO @result.
+
+  ENDMETHOD.
+
+ENDCLASS.

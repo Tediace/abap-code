@@ -1,0 +1,50 @@
+@EndUserText.label : 'Avalon Journal Post Staging'
+@AbapCatalog.enhancementCategory : #NOT_EXTENSIBLE
+@AbapCatalog.tableCategory : #TRANSPARENT
+@AbapCatalog.deliveryClass : #A
+@AbapCatalog.dataMaintenance : #ALLOWED
+define table zfava_post_stg {
+  key mandt    : mandt not null;
+  key zsession : zz_session not null;
+  key zcount   : zz_count not null;
+  key zeline   : zz_eline not null;
+  buzei        : buzei;
+  bukrs        : bukrs;
+  bldat        : bldat;
+  budat        : budat;
+  xblnr        : xblnr1;
+  bktxt        : bktxt;
+  blart        : blart;
+  waers        : waers;
+  umskz        : umskz;
+  hkont        : hkont;
+  kunnr        : kunnr;
+  lifnr        : lifnr;
+  mwskz        : mwskz;
+  @Semantics.amount.currencyCode : 'zfmj_log_h.waers'
+  fwbas        : fwbas;
+  @Semantics.amount.currencyCode : 'zfmj_log_h.waers'
+  wrbtr        : wrbtr;
+  @Semantics.amount.currencyCode : 'zfmj_log_h.waers'
+  dmbtr        : dmbtr;
+  valut        : valut;
+  zuonr        : dzuonr;
+  vbund        : rassc;
+  kostl        : kostl;
+  aufnr        : aufnr;
+  werks        : werks_d;
+  prctr        : prctr;
+  sgtxt        : sgtxt;
+  zterm        : dzterm;
+  zfbdt        : dzfbdt;
+  zlsch        : schzw_bseg;
+  posid        : ps_posid;
+  xref1        : xref1;
+  matnr        : matnr;
+  bupla        : bupla;
+  bcode        : bcode;
+  long_text    : zz_char255;
+  xref2        : xref2;
+  filename     : localfile;
+
+}

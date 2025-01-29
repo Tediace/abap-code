@@ -1,0 +1,19 @@
+INTERFACE zif_ava_validated_data_stg
+  PUBLIC .
+
+  TYPES: BEGIN OF t_a003,
+           kappl TYPE a003-kappl,
+           kschl TYPE a003-kschl,
+           aland TYPE a003-aland,
+           mwskz TYPE a003-mwskz,
+           knumh TYPE a003-knumh,
+         END OF t_a003,
+
+         t_a003_tab TYPE STANDARD TABLE OF t_a003 WITH EMPTY KEY.
+
+  DATA: it_data       TYPE zcl_ava_stg_repo=>ty_t_stg READ-ONLY,
+        it_log_header TYPE zcl_ava_log_repository=>ty_source-t_log_header READ-ONLY,
+        it_log_detail TYPE zcl_ava_log_repository=>ty_source-t_log_detail READ-ONLY,
+        it_a003       TYPE t_a003_tab READ-ONLY.
+
+ENDINTERFACE.

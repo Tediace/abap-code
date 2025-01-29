@@ -1,0 +1,19 @@
+@EndUserText.label : 'Fiscal Correction Category and Formula'
+@AbapCatalog.enhancementCategory : #NOT_EXTENSIBLE
+@AbapCatalog.tableCategory : #TRANSPARENT
+@AbapCatalog.deliveryClass : #A
+@AbapCatalog.dataMaintenance : #ALLOWED
+define table zfcit_map_fiscal {
+  key client             : abap.clnt not null;
+  @AbapCatalog.foreignKey.keyType : #KEY
+  @AbapCatalog.foreignKey.screenCheck : true
+  key gl_account         : saknr not null
+    with foreign key [1..*,1] ska1
+      where ktopl = 'GO00'
+        and saknr = zfcit_map_fiscal.gl_account;
+  gl_account_description : txt50_skat;
+  permanent_difference   : zde_cit_permanent_diff_check;
+  timing_difference      : zde_cit_timing_diff_check;
+  formula                : zde_cit_formula;
+
+}

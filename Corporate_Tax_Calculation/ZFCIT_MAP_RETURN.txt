@@ -1,0 +1,22 @@
+@EndUserText.label : 'CIT Return Mapping'
+@AbapCatalog.enhancementCategory : #NOT_EXTENSIBLE
+@AbapCatalog.tableCategory : #TRANSPARENT
+@AbapCatalog.deliveryClass : #A
+@AbapCatalog.dataMaintenance : #ALLOWED
+define table zfcit_map_return {
+  key client             : abap.clnt not null;
+  @AbapCatalog.foreignKey.keyType : #KEY
+  @AbapCatalog.foreignKey.screenCheck : true
+  key gl_account         : saknr not null
+    with foreign key [1..*,1] ska1
+      where ktopl = 'GO00'
+        and saknr = zfcit_map_return.gl_account;
+  gl_account_description : txt50_skat;
+  @EndUserText.label : '1771-Ia'
+  return_1771_ia         : abap.char(10);
+  @EndUserText.label : '1771-I'
+  return_1771_i          : abap.char(10);
+  @EndUserText.label : '1771-II'
+  return_1771_ii         : abap.char(10);
+
+}

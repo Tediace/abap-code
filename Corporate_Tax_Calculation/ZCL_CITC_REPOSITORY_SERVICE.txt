@@ -1,0 +1,104 @@
+CLASS zcl_citc_repository_service DEFINITION
+  PUBLIC
+  FINAL
+  CREATE PUBLIC .
+
+  PUBLIC SECTION.
+    INTERFACES zif_citc_repository_service.
+  PROTECTED SECTION.
+  PRIVATE SECTION.
+ENDCLASS.
+
+
+
+CLASS zcl_citc_repository_service IMPLEMENTATION.
+  METHOD zif_citc_repository_service~calculate_amt_in_local_curr.
+    DATA sum_hsl TYPE hslxx.
+
+    LOOP AT source_data INTO DATA(line_source).
+      " calculate hsl based on period
+      CLEAR sum_hsl.
+      LOOP AT periods INTO DATA(period).
+        ASSIGN COMPONENT |HSL{ period }| OF STRUCTURE line_source
+              TO FIELD-SYMBOL(<hsl>).
+        IF <hsl> IS ASSIGNED.
+          sum_hsl += <hsl>.
+        ENDIF.
+        UNASSIGN <hsl>.
+      ENDLOOP.
+
+      APPEND INITIAL LINE TO result REFERENCE INTO DATA(line_result).
+      line_result->racct = line_source-racct.
+      line_result->rbukrs = line_source-rbukrs.
+      line_result->ryear = line_source-ryear.
+      line_result->unaudited_bal = sum_hsl.
+
+    ENDLOOP.
+
+  ENDMETHOD.
+
+  METHOD zif_citc_repository_service~generate_period.
+
+    IF period_range IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    " only low value
+    SELECT low
+    FROM @period_range AS s
+    WHERE high IS INITIAL
+    INTO TABLE @DATA(lows)
+    ##ITAB_KEY_IN_SELECT.
+
+    IF lows IS NOT INITIAL.
+      result = VALUE #( FOR low IN lows
+                        ( CONV #( low+1 ) ) ).
+    ENDIF.
+
+    " low and high
+    SELECT low,
+           high
+    FROM @period_range AS s
+    WHERE high IS NOT INITIAL
+      AND low IS NOT INITIAL
+    INTO TABLE @DATA(lows_highs)
+    ##ITAB_KEY_IN_SELECT.
+
+    IF lows_highs IS NOT INITIAL.
+      LOOP AT lows_highs INTO DATA(low_high).
+        DATA(low_int) = CONV i( low_high-low ).
+        DATA(high_int) = CONV i( low_high-high ).
+        result = VALUE #( BASE result
+                          FOR i = low_int THEN i + 1 WHILE i <= high_int
+                          ( CONV #( i ) ) ).
+
+      ENDLOOP.
+    ENDIF.
+
+    " high only
+    SELECT high
+    FROM @period_range AS s
+    WHERE low IS INITIAL
+    INTO TABLE @DATA(highs)
+    ##ITAB_KEY_IN_SELECT.
+
+    IF highs IS NOT INITIAL.
+      LOOP AT highs INTO DATA(high).
+        DATA(hhigh_int) = CONV i( high-high ).
+        result = VALUE #( BASE result
+                          FOR i = 1 THEN i + 1 WHILE i <= hhigh_int
+                          ( CONV #( i ) ) ).
+
+      ENDLOOP.
+    ENDIF.
+
+    SELECT DISTINCT *
+    FROM @result AS s
+    ORDER BY table_line
+    INTO TABLE @result
+    ##ITAB_DB_SELECT.
+
+
+  ENDMETHOD.
+
+ENDCLASS.

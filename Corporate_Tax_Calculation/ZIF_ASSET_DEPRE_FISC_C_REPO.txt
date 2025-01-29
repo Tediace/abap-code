@@ -1,0 +1,20 @@
+INTERFACE zif_asset_depre_fisc_c_repo
+  PUBLIC .
+
+  TYPES ty_t_gl_acc_range TYPE RANGE OF saknr.
+  TYPES: BEGIN OF ty_currentyear_asset_tax_depre,
+         gl_account TYPE saknr,
+         current_year_asset_tax_depre TYPE hslxx12,
+         END OF TY_CURRENTYEAR_ASSET_TAX_DEPRE,
+
+         ty_t_currentyear_asset_tax_dep TYPE STANDARD TABLE OF ty_currentyear_asset_tax_depre
+               WITH EMPTY KEY.
+   TYPES ty_t_period_range TYPE RANGE OF poper.
+
+  METHODS find_source_data IMPORTING companycode   TYPE bukrs
+                                     fiscal_year   TYPE gjahr
+                                     gl_accounts_range TYPE ty_t_gl_acc_range
+                                     periods_range TYPE ty_t_period_range
+                           RETURNING VALUE(result) TYPE ty_t_currentyear_asset_tax_dep.
+
+ENDINTERFACE.

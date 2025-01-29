@@ -1,0 +1,1588 @@
+*&---------------------------------------------------------------------*
+*& Report zfr_citc_report
+*&---------------------------------------------------------------------*
+*&
+*&---------------------------------------------------------------------*
+REPORT zfr_citc_report.
+
+
+TABLES: t001, skb1, acdoca.
+
+CONSTANTS con_citc TYPE lvc_fname VALUE 'ZST_CITC_REPORT'.
+
+INCLUDE <icon>.
+INCLUDE <symbol>.
+
+CLASS lcl_events_d0100 DEFINITION DEFERRED.
+
+CONSTANTS: con_exit              TYPE sy-ucomm VALUE 'EXIT',
+           con_canc              TYPE sy-ucomm VALUE 'CANC',
+           con_back              TYPE sy-ucomm VALUE 'BACK',
+           con_save              TYPE sy-ucomm VALUE 'SAVE',
+           con_on                TYPE char1 VALUE '1',
+           con_off               TYPE char1 VALUE '0',
+           con_true              TYPE char1 VALUE 'X',
+           con_edit_event_enter  TYPE i VALUE 1,
+           con_edit_event_modify TYPE i VALUE 2,
+           con_edit_mode_display TYPE i VALUE 1,
+           con_edit_mode_change  TYPE i VALUE 2.
+
+TYPES: BEGIN OF g_ty_s_spec,
+         edit_mode        TYPE i,
+         edit_event       TYPE i,
+         bypassing_buffer TYPE char1,
+         buffer_active    TYPE char1,
+       END OF g_ty_s_spec.
+
+TYPES: BEGIN OF g_ty_s_outtab.
+         INCLUDE TYPE zst_citc_report.
+TYPES:   initial_depre TYPE hslxx12,
+         handle_style  TYPE lvc_t_styl,
+         color         TYPE char4,
+       END OF g_ty_s_outtab,
+       g_ty_t_outtab TYPE STANDARD TABLE OF g_ty_s_outtab WITH EMPTY KEY.
+
+
+DATA citc_data TYPE STANDARD TABLE OF zst_citc_report WITH EMPTY KEY.
+DATA: g_okcode TYPE sy-ucomm.
+DATA: gt_outtab            TYPE g_ty_t_outtab,
+      gr_container_d0100   TYPE REF TO cl_gui_custom_container,
+      gr_grid_d0100        TYPE REF TO cl_gui_alv_grid,
+      gr_events_d0100      TYPE REF TO lcl_events_d0100,
+      gr_docking_container TYPE REF TO cl_gui_docking_container,
+      gr_document          TYPE REF TO cl_dd_document,
+      gs_spec              TYPE g_ty_s_spec.
+
+INTERFACE lif_events_helper.
+
+  METHODS modify_cell_data_changed.
+  METHODS process_manual_fisc_correct.
+ENDINTERFACE.
+
+CLASS lcl_events_helper DEFINITION CREATE PUBLIC.
+
+  PUBLIC SECTION.
+    INTERFACES lif_events_helper.
+    METHODS constructor IMPORTING er_data_changed TYPE REF TO cl_alv_changed_data_protocol.
+  PROTECTED SECTION.
+  PRIVATE SECTION.
+    DATA mr_data_changed TYPE REF TO cl_alv_changed_data_protocol.
+    METHODS get_fiscal_correction IMPORTING unaudited_bal_after_adj TYPE hslxx12
+                                            depre_val               TYPE hslxx12
+                                            formula                 TYPE zde_cit_formula
+                                  RETURNING VALUE(result)           TYPE hslxx12.
+    METHODS modify_manual_fisc_balance IMPORTING row_id          TYPE int4
+                                                 tabix           TYPE int4
+                                                 fisc_correction TYPE hslxx12.
+
+ENDCLASS.
+
+CLASS lcl_events_helper IMPLEMENTATION.
+
+  METHOD lif_events_helper~modify_cell_data_changed.
+    DATA credit TYPE hslxx.
+    DATA debit TYPE hslxx.
+    DATA unaudited_bal TYPE hslxx.
+    DATA unaudited_bal_after_adj TYPE hslxx.
+    DATA is_permanent TYPE abap_bool.
+    DATA formula TYPE zde_cit_formula.
+    DATA permanent TYPE hslxx12.
+    DATA timing TYPE hslxx12.
+    DATA depre_val TYPE hslxx12.
+
+    " modify value
+    SELECT DISTINCT row_id,
+                    tabix
+    FROM @mr_data_changed->mt_mod_cells AS s
+    INTO TABLE @DATA(row_ids)
+    ##ITAB_DB_SELECT
+    ##ITAB_KEY_IN_SELECT.
+
+    LOOP AT row_ids REFERENCE INTO DATA(row_id).
+      CLEAR: credit, debit, unaudited_bal, unaudited_bal_after_adj, depre_val.
+      ASSIGN mr_data_changed->mt_mod_cells[ row_id = row_id->row_id
+                                            tabix = row_id->tabix
+                                            fieldname = 'ADJUSTMENT_CREDIT' ]
+                                            TO FIELD-SYMBOL(<credit>).
+      IF <credit> IS ASSIGNED.
+        mr_data_changed->get_cell_value(
+          EXPORTING
+            i_row_id    = <credit>-row_id
+            i_tabix     = <credit>-tabix
+            i_fieldname = <credit>-fieldname
+          IMPORTING
+            e_value     = credit
+        ).
+
+      ELSE.
+        mr_data_changed->get_cell_value(
+          EXPORTING
+            i_row_id    = row_id->row_id
+            i_tabix     = row_id->tabix
+            i_fieldname = 'ADJUSTMENT_CREDIT'
+          IMPORTING
+            e_value     = credit
+        ).
+
+
+      ENDIF.
+
+      ASSIGN mr_data_changed->mt_mod_cells[ row_id = row_id->row_id
+                                            tabix = row_id->tabix
+                                            fieldname = 'ADJUSTMENT_DEBIT' ]
+                                            TO FIELD-SYMBOL(<debit>).
+      IF <debit> IS ASSIGNED.
+        mr_data_changed->get_cell_value(
+          EXPORTING
+            i_row_id    = <debit>-row_id
+            i_tabix     = <debit>-tabix
+            i_fieldname = <debit>-fieldname
+          IMPORTING
+            e_value     = debit
+        ).
+
+      ELSE.
+
+        mr_data_changed->get_cell_value(
+          EXPORTING
+            i_row_id    = row_id->row_id
+            i_tabix     = row_id->tabix
+            i_fieldname = 'ADJUSTMENT_DEBIT'
+          IMPORTING
+            e_value     = debit
+        ).
+      ENDIF.
+
+      mr_data_changed->get_cell_value(
+        EXPORTING
+          i_row_id    = row_id->row_id
+          i_tabix     = row_id->tabix
+          i_fieldname = 'UNAUDITED_BALANCE'
+        IMPORTING
+          e_value     = unaudited_bal
+      ).
+      " calculate
+      unaudited_bal_after_adj = unaudited_bal + debit + credit.
+      " modify
+      mr_data_changed->modify_cell(
+        EXPORTING
+          i_row_id    = row_id->row_id
+          i_tabix     = row_id->tabix
+          i_fieldname = 'AUDITED_BALANCE'
+          i_value     = unaudited_bal_after_adj
+      ).
+
+      mr_data_changed->get_cell_value(
+      EXPORTING
+        i_row_id    = row_id->row_id
+        i_tabix     = row_id->tabix
+        i_fieldname = 'CORRECTION_FORMULA'
+      IMPORTING
+        e_value     = formula
+    ).
+
+      " modify fiscal correction with formula
+      IF formula IS NOT INITIAL.
+        mr_data_changed->get_cell_value(
+      EXPORTING
+        i_row_id    = row_id->row_id
+        i_tabix     = row_id->tabix
+        i_fieldname = 'INITIAL_DEPRE'
+      IMPORTING
+        e_value     = depre_val
+      ).
+
+        DATA(fiscal_correction) = get_fiscal_correction(
+                                    unaudited_bal_after_adj = unaudited_bal_after_adj
+                                    depre_val               = depre_val
+                                    formula                 = formula
+                                  ).
+
+
+        mr_data_changed->get_cell_value(
+          EXPORTING
+            i_row_id    = row_id->row_id
+            i_tabix     = row_id->tabix
+            i_fieldname = 'IS_CORRECTION_PERMANENT'
+          IMPORTING
+            e_value     = is_permanent
+        ).
+
+        IF is_permanent = abap_true.
+          mr_data_changed->modify_cell(
+          EXPORTING
+            i_row_id    = row_id->row_id
+            i_tabix     = row_id->tabix
+            i_fieldname = 'FISCAL_CORRECTION_PERMANENT'
+            i_value     = fiscal_correction
+        ).
+
+        ELSE.
+          mr_data_changed->modify_cell(
+          EXPORTING
+            i_row_id    = row_id->row_id
+            i_tabix     = row_id->tabix
+            i_fieldname = 'FISCAL_CORRECTION_TIMING'
+            i_value     = fiscal_correction
+        ).
+
+        ENDIF.
+
+        " fiscal balance
+        mr_data_changed->modify_cell(
+          EXPORTING
+            i_row_id    = row_id->row_id
+            i_tabix     = row_id->tabix
+            i_fieldname = 'FISCAL_BALANCE'
+            i_value     = unaudited_bal_after_adj + fiscal_correction
+        ).
+      ELSE.
+        CLEAR: permanent, timing.
+        mr_data_changed->get_cell_value(
+          EXPORTING
+            i_row_id    = row_id->row_id
+            i_tabix     = row_id->tabix
+            i_fieldname = 'FISCAL_CORRECTION_PERMANENT'
+          IMPORTING
+            e_value     = permanent
+        ).
+        mr_data_changed->get_cell_value(
+          EXPORTING
+            i_row_id    = row_id->row_id
+            i_tabix     = row_id->tabix
+            i_fieldname = 'FISCAL_CORRECTION_TIMING'
+          IMPORTING
+            e_value     = timing
+        ).
+
+        " fiscal balance
+        mr_data_changed->modify_cell(
+          EXPORTING
+            i_row_id    = row_id->row_id
+            i_tabix     = row_id->tabix
+            i_fieldname = 'FISCAL_BALANCE'
+            i_value     = unaudited_bal_after_adj + permanent + timing
+        ).
+
+      ENDIF.
+      UNASSIGN: <debit>, <credit>.
+    ENDLOOP.
+
+  ENDMETHOD.
+
+  METHOD lif_events_helper~process_manual_fisc_correct.
+    DATA permanent_cell_val TYPE hslxx12.
+    DATA timing_cell_val TYPE hslxx12.
+
+    SELECT *
+    FROM @mr_data_changed->mt_mod_cells AS s
+    WHERE fieldname = 'FISCAL_CORRECTION_PERMANENT'
+    INTO TABLE @DATA(mod_permanents)
+    ##ITAB_KEY_IN_SELECT.
+
+    SELECT *
+    FROM @mr_data_changed->mt_mod_cells AS s
+    WHERE fieldname = 'FISCAL_CORRECTION_TIMING'
+    INTO TABLE @DATA(mod_timings)
+    ##ITAB_KEY_IN_SELECT.
+
+
+    LOOP AT mod_permanents REFERENCE INTO DATA(permanent).
+      CLEAR permanent_cell_val.
+
+      mr_data_changed->get_cell_value(
+          EXPORTING
+            i_row_id    = permanent->row_id
+            i_tabix     = permanent->tabix
+            i_fieldname = 'FISCAL_CORRECTION_PERMANENT'
+          IMPORTING
+            e_value     = permanent_cell_val
+        ).
+      ASSIGN mr_data_changed->mt_mod_cells[ row_id = permanent->row_id
+                                            tabix = permanent->tabix
+                                            fieldname = 'FISCAL_CORRECTION_TIMING' ]
+                                            TO FIELD-SYMBOL(<timing>).
+
+      IF <timing> IS ASSIGNED.
+        CLEAR timing_cell_val.
+        " check when performing clearing on at least one of the cell value
+        " permanent value --> initial
+        " or
+        " timing value --> initial
+        " or
+        " both --> initial
+
+        mr_data_changed->get_cell_value(
+          EXPORTING
+            i_row_id    = permanent->row_id
+            i_tabix     = permanent->tabix
+            i_fieldname = 'FISCAL_CORRECTION_TIMING'
+          IMPORTING
+            e_value     = timing_cell_val
+        ).
+        IF permanent_cell_val IS NOT INITIAL
+          AND timing_cell_val IS NOT INITIAL. " when both cells are occupied
+          " error
+
+          mr_data_changed->add_protocol_entry(
+            EXPORTING
+              i_msgid     = 'DB'
+              i_msgty     = 'E'
+              i_msgno     = '711'
+              i_fieldname = 'FISCAL_CORRECTION_PERMANENT'
+              i_row_id    = permanent->row_id
+              i_tabix     = permanent->tabix
+          ).
+
+          mr_data_changed->add_protocol_entry(
+            EXPORTING
+              i_msgid     = 'DB'
+              i_msgty     = 'E'
+              i_msgno     = '711'
+              i_fieldname = 'FISCAL_CORRECTION_TIMING'
+              i_row_id    = permanent->row_id
+              i_tabix     = permanent->tabix
+          ).
+
+        ELSEIF permanent_cell_val IS INITIAL
+           AND timing_cell_val IS NOT INITIAL.
+          mr_data_changed->modify_style(
+            EXPORTING
+              i_row_id    = permanent->row_id
+              i_fieldname = 'FISCAL_CORRECTION_PERMANENT'
+              i_style     = cl_gui_alv_grid=>mc_style_disabled
+          ).
+          modify_manual_fisc_balance(
+          EXPORTING
+            row_id          = permanent->row_id
+            tabix           = permanent->tabix
+            fisc_correction = permanent_cell_val
+        ).
+
+        ELSE.
+          mr_data_changed->modify_style(
+              EXPORTING
+                i_row_id    = permanent->row_id
+                i_fieldname = 'FISCAL_CORRECTION_TIMING'
+                i_style     = cl_gui_alv_grid=>mc_style_disabled
+            ).
+          modify_manual_fisc_balance(
+          EXPORTING
+            row_id          = permanent->row_id
+            tabix           = permanent->tabix
+            fisc_correction = permanent_cell_val
+        ).
+
+        ENDIF.
+
+      ELSE.
+        IF permanent_cell_val IS NOT INITIAL.
+          mr_data_changed->modify_style(
+            EXPORTING
+              i_row_id    = permanent->row_id
+              i_fieldname = 'FISCAL_CORRECTION_TIMING'
+              i_style     = cl_gui_alv_grid=>mc_style_disabled
+          ).
+
+        ELSE.
+*          mr_data_changed->modify_style(
+*            EXPORTING
+*              i_row_id    = permanent->row_id
+*              i_fieldname = 'FISCAL_CORRECTION_TIMING'
+*              i_style     = cl_gui_alv_grid=>mc_style_enabled
+*          ).
+
+          mr_data_changed->get_cell_value(
+          EXPORTING
+            i_row_id    = permanent->row_id
+            i_tabix     = permanent->tabix
+            i_fieldname = 'FISCAL_CORRECTION_TIMING'
+          IMPORTING
+            e_value     = timing_cell_val
+        ).
+          IF <timing> IS ASSIGNED.
+            mr_data_changed->modify_style(
+              EXPORTING
+                i_row_id    = permanent->row_id
+                i_fieldname = 'FISCAL_CORRECTION_TIMING'
+                i_style     = cl_gui_alv_grid=>mc_style_enabled
+            ).
+          ELSEIF timing_cell_val IS NOT INITIAL.
+            mr_data_changed->modify_style(
+            EXPORTING
+              i_row_id    = permanent->row_id
+              i_fieldname = 'FISCAL_CORRECTION_PERMANENT'
+              i_style     = cl_gui_alv_grid=>mc_style_disabled ).
+
+          ENDIF.
+*          IF timing_cell_val IS NOT INITIAL.
+*            mr_data_changed->modify_style(
+*            EXPORTING
+*              i_row_id    = permanent->row_id
+*              i_fieldname = 'FISCAL_CORRECTION_PERMANENT'
+*              i_style     = cl_gui_alv_grid=>mc_style_disabled
+*          ).
+*          ENDIF.
+
+        ENDIF.
+
+        " fiscal balance
+        modify_manual_fisc_balance(
+          EXPORTING
+            row_id          = permanent->row_id
+            tabix           = permanent->tabix
+            fisc_correction = permanent_cell_val
+        ).
+      ENDIF.
+
+    ENDLOOP.
+
+    LOOP AT mod_timings REFERENCE INTO DATA(timing).
+      ASSIGN mr_data_changed->mt_mod_cells[ row_id = timing->row_id
+                                            tabix = timing->tabix
+                                            fieldname = 'FISCAL_CORRECTION_PERMANENT' ]
+                                            TO FIELD-SYMBOL(<permanent>).
+      CLEAR timing_cell_val.
+      " when perform clearing one of the cell
+
+      mr_data_changed->get_cell_value(
+        EXPORTING
+          i_row_id    = timing->row_id
+          i_tabix     = timing->tabix
+          i_fieldname = 'FISCAL_CORRECTION_TIMING'
+        IMPORTING
+          e_value     = timing_cell_val
+      ).
+      IF <permanent> IS NOT ASSIGNED.
+        IF timing_cell_val IS NOT INITIAL.
+          mr_data_changed->modify_style(
+            EXPORTING
+              i_row_id    = timing->row_id
+              i_fieldname = 'FISCAL_CORRECTION_PERMANENT'
+              i_style     = cl_gui_alv_grid=>mc_style_disabled
+          ).
+
+        ELSE.
+          mr_data_changed->modify_style(
+            EXPORTING
+              i_row_id    = timing->row_id
+              i_fieldname = 'FISCAL_CORRECTION_PERMANENT'
+              i_style     = cl_gui_alv_grid=>mc_style_enabled
+          ).
+          mr_data_changed->get_cell_value(
+        EXPORTING
+          i_row_id    = timing->row_id
+          i_tabix     = timing->tabix
+          i_fieldname = 'FISCAL_CORRECTION_PERMANENT'
+        IMPORTING
+          e_value     = permanent_cell_val
+      ).
+
+          IF permanent_cell_val IS NOT INITIAL.
+            mr_data_changed->modify_style(
+            EXPORTING
+              i_row_id    = timing->row_id
+              i_fieldname = 'FISCAL_CORRECTION_TIMING'
+              i_style     = cl_gui_alv_grid=>mc_style_disabled
+          ).
+          ENDIF.
+
+
+        ENDIF.
+
+        " fiscal balance
+
+        modify_manual_fisc_balance(
+          EXPORTING
+            row_id          = timing->row_id
+            tabix           = timing->tabix
+            fisc_correction = timing_cell_val
+        ).
+      ENDIF.
+
+    ENDLOOP.
+
+  ENDMETHOD.
+
+  METHOD constructor.
+
+    mr_data_changed = er_data_changed.
+
+  ENDMETHOD.
+
+  METHOD get_fiscal_correction.
+
+    result = NEW zcl_citc_data_service( NEW zcl_asset_depre_fisc_c_repo( )
+     )->zif_citc_data_service~calculate_fiscal_correction(
+        formula                      = formula
+        unaudited_bal_after_adj      = unaudited_bal_after_adj
+        current_year_asset_tax_depre = depre_val
+    ).
+
+  ENDMETHOD.
+
+  METHOD modify_manual_fisc_balance.
+
+    DATA audited_bal TYPE hslxx12.
+
+    mr_data_changed->get_cell_value(
+        EXPORTING
+          i_row_id    = row_id
+          i_tabix     = tabix
+          i_fieldname = 'AUDITED_BALANCE'
+        IMPORTING
+          e_value     = audited_bal
+      ).
+
+    mr_data_changed->modify_cell(
+      EXPORTING
+        i_row_id    = row_id
+        i_tabix     = tabix
+        i_fieldname = 'FISCAL_BALANCE'
+        i_value     = audited_bal + fisc_correction
+    ).
+
+
+  ENDMETHOD.
+
+ENDCLASS.
+
+CLASS lcl_events_d0100 DEFINITION CREATE PUBLIC.
+
+  PUBLIC SECTION.
+    METHODS data_changed FOR EVENT data_changed
+      OF cl_gui_alv_grid
+      IMPORTING er_data_changed
+                e_onf4
+                e_onf4_after
+                e_onf4_before
+                e_ucomm.
+
+    METHODS data_changed_finished FOR EVENT data_changed_finished
+        OF cl_gui_alv_grid.
+
+    METHODS print_top_of_list FOR EVENT print_top_of_list OF cl_gui_alv_grid.
+
+  PROTECTED SECTION.
+  PRIVATE SECTION.
+    DATA mo_event_helper TYPE REF TO lif_events_helper.
+
+ENDCLASS.
+
+CLASS lcl_events_d0100 IMPLEMENTATION.
+
+  METHOD data_changed.
+*    FIELD-SYMBOLS <modified_data> TYPE zif_citc_data_service=>ty_t_data.
+    DATA modified_data TYPE REF TO data.
+    DATA credit TYPE hslxx.
+    DATA debit TYPE hslxx.
+    DATA unaudited_bal TYPE hslxx.
+    DATA unaudited_bal_after_adj TYPE hslxx.
+
+    mo_event_helper = NEW lcl_events_helper( er_data_changed ).
+    " credit value always minus sign
+    LOOP AT er_data_changed->mt_mod_cells INTO DATA(mod_cell)
+      WHERE fieldname = 'ADJUSTMENT_CREDIT'.
+      er_data_changed->get_cell_value(
+        EXPORTING
+          i_row_id    = mod_cell-row_id
+          i_tabix     = mod_cell-tabix
+          i_fieldname = mod_cell-fieldname
+        IMPORTING
+          e_value     = credit
+      ).
+
+      credit = abs( credit ) * -1.
+
+      er_data_changed->modify_cell(
+        EXPORTING
+          i_row_id    = mod_cell-row_id
+          i_tabix     = mod_cell-tabix
+          i_fieldname = mod_cell-fieldname
+          i_value     = credit
+      ).
+
+    ENDLOOP.
+
+*    modified_data = REF zif_citc_data_service=>ty_t_data( er_data_changed->mp_mod_rows->* ).
+    ASSIGN er_data_changed->mp_mod_rows->* TO FIELD-SYMBOL(<modified_data>).
+
+    " DO NOT CHANGE THE ORDER!!
+    " modify cell for unaudited balance after adjustment,
+    " registered formula for fiscal correction
+    " and fiscal balance
+    mo_event_helper->modify_cell_data_changed( ).
+    " process manual fiscal correction
+    mo_event_helper->process_manual_fisc_correct( ).
+
+
+
+  ENDMETHOD.
+
+  METHOD data_changed_finished.
+
+    PERFORM d0100_event_data_changed_finis.
+
+  ENDMETHOD.
+
+  METHOD print_top_of_list.
+
+    PERFORM print_top_of_list.
+
+  ENDMETHOD.
+
+ENDCLASS.
+
+CLASS lcl_repository DEFINITION CREATE PUBLIC.
+
+  PUBLIC SECTION.
+    INTERFACES zif_citc_repository.
+  PROTECTED SECTION.
+  PRIVATE SECTION.
+
+ENDCLASS.
+
+CLASS lcl_repository IMPLEMENTATION.
+
+  METHOD zif_citc_repository~find_local_curr.
+
+  ENDMETHOD.
+
+  METHOD zif_citc_repository~find_source_data.
+
+  ENDMETHOD.
+
+ENDCLASS.
+
+CLASS lcl_data_service DEFINITION CREATE PUBLIC.
+
+  PUBLIC SECTION.
+    INTERFACES zif_citc_data_service.
+  PROTECTED SECTION.
+  PRIVATE SECTION.
+
+ENDCLASS.
+
+CLASS lcl_data_service IMPLEMENTATION.
+
+  METHOD zif_citc_data_service~generate_data.
+
+    result = VALUE #( ( gl_account = '6201020001'
+                        gl_account_description = 'IT - SOFTWARE LICENSE AND SUBSCRIPTION'
+                        currency = 'IDR'
+                        unaudited_balance = '4388817.43'
+                        mapping_cit_return_1771_ia = '1a'
+                        is_correction_permanent = abap_true
+                        correction_formula = '03' )
+                      ( gl_account = '6201020002'
+                        gl_account_description = 'BACKSLASH Academy'
+                        currency = 'IDR'
+                        unaudited_balance = '500000'
+                        mapping_cit_return_1771_ia = '1a' )
+                      ( gl_account = '6201020003'
+                        gl_account_description = 'BACKSLASH Community'
+                        currency = 'IDR'
+                        unaudited_balance = '700000'
+                        mapping_cit_return_1771_ia = '1a'
+                        is_correction_timing = abap_true
+                        correction_formula = '02' )
+                      ( gl_account = '6201020004'
+                        gl_account_description = 'CHERNOBYL'
+                        currency = 'IDR'
+                        unaudited_balance = '900000'
+                        mapping_cit_return_1771_ia = '1a'
+                        is_correction_permanent = abap_true
+                        correction_formula = '01' ) ).
+
+  ENDMETHOD.
+
+  METHOD zif_citc_data_service~calculate_fiscal_correction.
+
+  ENDMETHOD.
+
+  METHOD zif_citc_data_service~generate_summarize.
+
+  ENDMETHOD.
+
+ENDCLASS.
+
+CLASS lcl_main DEFINITION CREATE PRIVATE.
+
+  PUBLIC SECTION.
+    CLASS-METHODS create
+      RETURNING
+        VALUE(r_result) TYPE REF TO lcl_main.
+
+    METHODS run IMPORTING companycode   TYPE bukrs
+                          gl_accounts   TYPE zif_citc_repository=>ty_t_saknr_range
+                          fiscal_year   TYPE gjahr
+                          periods       TYPE zif_citc_repository=>ty_t_poper_range
+                RETURNING VALUE(result) TYPE zif_citc_data_service=>ty_t_data.
+  PROTECTED SECTION.
+  PRIVATE SECTION.
+    CLASS-DATA main TYPE REF TO lcl_main.
+
+ENDCLASS.
+
+CLASS lcl_main IMPLEMENTATION.
+
+  METHOD create.
+
+    IF main IS BOUND.
+      r_result = main.
+    ELSE.
+      main = NEW #( ).
+      r_result = main.
+
+    ENDIF.
+
+
+  ENDMETHOD.
+
+  METHOD run.
+
+    DATA repository TYPE REF TO zif_citc_repository.
+    DATA data_service TYPE REF TO zif_citc_data_service.
+
+    repository = NEW zcl_citc_repository( NEW zcl_citc_repository_service( ) ).
+*    repository = NEW lcl_repository( ).
+    data_service = NEW zcl_citc_data_service02( NEW zcl_asset_depre_fisc_c_repo( ) ).
+*    data_service = NEW lcl_data_service( ).
+
+    result = data_service->generate_summarize(
+               data_service->generate_data(
+                  source_data = repository->find_source_data( companycode = companycode
+                                                              gl_accounts = gl_accounts
+                                                              fiscal_year = fiscal_year
+                                                              periods     = periods )
+                  periods_range = periods ) ).
+
+  ENDMETHOD.
+
+ENDCLASS.
+
+
+SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-b01.
+
+  PARAMETERS p_bukrs TYPE t001-bukrs OBLIGATORY.
+  SELECT-OPTIONS so_saknr FOR skb1-saknr.
+  PARAMETERS p_gjahr TYPE gjahr OBLIGATORY.
+  SELECT-OPTIONS so_poper FOR acdoca-poper NO-EXTENSION OBLIGATORY.
+
+SELECTION-SCREEN END OF BLOCK b1.
+
+
+START-OF-SELECTION.
+
+  " get data
+  citc_data = lcl_main=>create( )->run(
+                                  companycode = p_bukrs
+                                  gl_accounts = so_saknr[]
+                                  fiscal_year = p_gjahr
+                                  periods     = so_poper[]
+                                ).
+
+  IF citc_data IS INITIAL.
+    MESSAGE 'No Data Found' TYPE 'S' DISPLAY LIKE 'E'.
+    LEAVE LIST-PROCESSING.
+  ENDIF.
+
+  gs_spec-edit_mode = con_edit_mode_display.
+  gs_spec-edit_event = con_edit_event_enter.
+  gs_spec-bypassing_buffer = abap_true.
+
+END-OF-SELECTION.
+  " display
+  CALL SCREEN 100.
+*&---------------------------------------------------------------------*
+*& Module STATUS_0100 OUTPUT
+*&---------------------------------------------------------------------*
+*&
+*&---------------------------------------------------------------------*
+MODULE status_0100 OUTPUT.
+  PERFORM set_status_0100.
+ENDMODULE.
+*&---------------------------------------------------------------------*
+*& Module PREPARE_CONTAINER OUTPUT
+*&---------------------------------------------------------------------*
+*&
+*&---------------------------------------------------------------------*
+MODULE prepare_container_0100 OUTPUT.
+  PERFORM prepare_container_0100.
+ENDMODULE.
+*&---------------------------------------------------------------------*
+*&      Module  EXIT_0100  INPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+MODULE exit_0100 INPUT.
+  PERFORM exit_0100.
+ENDMODULE.
+*&---------------------------------------------------------------------*
+*&      Module  FCODE_0100  INPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+MODULE fcode_0100 INPUT.
+  PERFORM fcode_0100.
+ENDMODULE.
+*&---------------------------------------------------------------------*
+*& Form set_status_0100
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM set_status_0100 .
+
+  TYPES: BEGIN OF l_ty_s_excl,
+           func TYPE syucomm,
+         END OF l_ty_s_excl,
+         l_ty_t_excl TYPE STANDARD TABLE OF l_ty_s_excl WITH EMPTY KEY.
+
+  DATA: lt_excl TYPE l_ty_t_excl.
+
+  SET PF-STATUS 'ZD0100' EXCLUDING lt_excl.
+  SET TITLEBAR 'ZD0100'.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form prepare_container
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM prepare_container_0100 .
+
+  DATA: lt_fcat             TYPE lvc_t_fcat,
+        ls_layo             TYPE lvc_s_layo,
+        ls_vari             TYPE disvariant,
+        ls_prnt             TYPE lvc_s_prnt,
+        lt_hype             TYPE lvc_t_hype,
+        l_consistency_check TYPE char1.
+
+  FIELD-SYMBOLS <outtab> TYPE ANY TABLE.
+
+  IF gr_container_d0100 IS INITIAL.
+    IF cl_gui_alv_grid=>offline( ) IS INITIAL.
+      gr_container_d0100 = NEW cl_gui_custom_container(
+        container_name          = 'ZD0100_CONTAINER'
+      ).
+    ENDIF.
+    gr_grid_d0100 = NEW cl_gui_alv_grid( i_parent = gr_container_d0100 ).
+
+    PERFORM get_outtab_0100.
+
+    PERFORM set_grid_vari_0100 CHANGING ls_vari.
+    PERFORM set_grid_layo_0100 CHANGING ls_layo.
+    PERFORM set_grid_fcat_0100 CHANGING lt_fcat.
+    PERFORM set_grid_hype_0100 CHANGING lt_fcat
+                                        lt_hype.
+    PERFORM set_grid_drdn_0100 CHANGING lt_fcat.
+    PERFORM set_grid_butt_0100 CHANGING lt_fcat.
+    PERFORM set_grid_onf4_0100.
+    PERFORM set_grid_events_0100.
+    PERFORM set_grid_edit_0100 CHANGING ls_layo
+                                        lt_fcat.
+    PERFORM set_grid_color_0100 CHANGING ls_layo.
+    PERFORM set_header_0100.
+    ls_prnt-grpchgedit = con_true.
+
+    gr_grid_d0100->set_table_for_first_display(
+      EXPORTING
+        i_buffer_active               = gs_spec-buffer_active
+        i_bypassing_buffer            = gs_spec-bypassing_buffer
+        i_consistency_check           = l_consistency_check
+        is_variant                    =  ls_vari
+        i_save                        = 'A'
+        i_default                     = 'X'
+        is_layout                     = ls_layo
+        is_print                      = ls_prnt
+        it_hyperlink                  = lt_hype
+        it_toolbar_excluding          = VALUE #( ( cl_gui_alv_grid=>mc_fg_sort )
+                                                 ( cl_gui_alv_grid=>mc_fc_sum )
+                                                 ( cl_gui_alv_grid=>mc_mb_sum )
+                                                 ( cl_gui_alv_grid=>mc_fc_sort )
+                                                 ( cl_gui_alv_grid=>mc_fc_subtot ) )
+      CHANGING
+        it_outtab                     = gt_outtab                 " Output Table
+        it_fieldcatalog               = lt_fcat                 " Field Catalog
+       ).
+
+  ENDIF.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form exit_0100
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM exit_0100 .
+  DATA l_okcode LIKE sy-ucomm.
+
+  l_okcode = g_okcode.
+  CLEAR g_okcode.
+
+  CASE l_okcode.
+    WHEN con_exit OR con_back OR con_canc.
+      gr_grid_d0100->free( ).
+      gr_container_d0100->free( ).
+      cl_gui_cfw=>flush( ).
+
+      CLEAR gr_container_d0100.
+      CLEAR gr_grid_d0100.
+      CLEAR gr_events_d0100.
+
+      SET SCREEN 0.
+      LEAVE SCREEN.
+  ENDCASE.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form fcode_0100
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM fcode_0100 .
+
+  DATA: l_okcode LIKE sy-ucomm.
+
+  l_okcode = g_okcode.
+  CLEAR g_okcode.
+
+  CASE l_okcode.
+    WHEN con_exit OR con_back OR con_canc.
+      g_okcode = l_okcode.
+      PERFORM exit_0100.
+
+    WHEN 'TOGGLE'.                                          "#EC NOTEXT
+      DATA: l_edit TYPE i.
+
+      CASE gs_spec-edit_mode.
+        WHEN con_edit_mode_change.
+          gs_spec-edit_mode = con_edit_mode_display.
+          l_edit            = con_off.
+        WHEN con_edit_mode_display.
+          gs_spec-edit_mode = con_edit_mode_change.
+          l_edit            = con_on.
+      ENDCASE.
+
+      gr_grid_d0100->set_ready_for_input( l_edit ).
+  ENDCASE.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form get_outtab_0100
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM get_outtab_0100 .
+
+  gt_outtab = CORRESPONDING #( citc_data ).
+
+  LOOP AT gt_outtab REFERENCE INTO DATA(line)
+   WHERE correction_formula = '03'.
+    line->initial_depre = COND #( WHEN line->is_correction_permanent = abap_true
+                                  THEN line->fiscal_correction_permanent +
+                                         line->unaudited_balance
+                                  WHEN line->is_correction_timing = abap_true
+                                  THEN line->fiscal_correction_timing +
+                                         line->unaudited_balance ).
+  ENDLOOP.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form set_grid_vari_0100
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*&      <--> LS_VARI
+*&---------------------------------------------------------------------*
+FORM set_grid_vari_0100  CHANGING cs_vari TYPE disvariant.
+  cs_vari-report      = sy-repid.
+  cs_vari-handle      = space.
+  cs_vari-log_group   = space.
+  cs_vari-username    = space.
+  cs_vari-variant     = space.
+  cs_vari-text        = space.
+  cs_vari-dependvars  = space.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form set_grid_layo_0100
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*&      <--> LS_LAYO
+*&---------------------------------------------------------------------*
+FORM set_grid_layo_0100  CHANGING cs_layo TYPE lvc_s_layo.
+*... ALV-Control: Allgemeine Anzeigeoptionen
+  cs_layo-stylefname  = space.
+
+  cs_layo-cwidth_opt  = space.
+  cs_layo-zebra       = space.
+  cs_layo-smalltitle  = space.
+  cs_layo-graphics    = space.
+  cs_layo-frontend    = space.
+  cs_layo-template    = space.
+
+*... ALV-Control: Gridcustomizing
+  cs_layo-no_colexpd  = space.
+  cs_layo-no_hgridln  = space.
+  cs_layo-no_vgridln  = space.
+  cs_layo-no_rowmark  = abap_true.
+  cs_layo-no_headers  = space.
+  cs_layo-no_merging  = space.
+  cs_layo-grid_title  = space.
+
+  cs_layo-no_toolbar  = space.
+
+*  cs_layo-sel_mode    = gs_test-layo_selection.
+
+*  cs_layo-box_fname   = 'BOX'.
+
+  cs_layo-sgl_clk_hd  = space.
+
+*... ALV-Control: Summenoptionen
+  cs_layo-totals_bef  = space.
+  cs_layo-no_totline  = space.
+  cs_layo-numc_total  = con_true.
+  cs_layo-no_utsplit  = space.
+
+*... ALV-Control: Exceptions
+*  cs_layo-excp_group  = gs_test-excp_group.
+*  cs_layo-excp_fname  = 'LIGHTS'.
+*  cs_layo-excp_rolln  = space.
+*  cs_layo-excp_conds  = gs_test-excp_condense.
+*  cs_layo-excp_led    = gs_test-excp_led.
+
+*... ALV-Control: Steuerung Interaktion
+  cs_layo-detailinit  = space.
+  cs_layo-detailtitl  = space.
+  cs_layo-keyhot      = space.
+  cs_layo-no_keyfix   = space.
+  cs_layo-no_author   = space.
+  CLEAR cs_layo-s_dragdrop.
+
+*... ALV-Control: Farben
+  cs_layo-info_fname  = space.
+  cs_layo-ctab_fname  = space.
+
+*... ALV-Control: Eingabefähigkeit
+  cs_layo-edit        = space.
+  cs_layo-edit_mode   = space.
+
+  cs_layo-no_rowins   = space.
+  cs_layo-no_rowmove  = space.
+
+*... ALV-Control: Web-Optionen
+  cs_layo-weblook     = space.
+  cs_layo-webstyle    = space.
+  cs_layo-webrows     = space.
+  cs_layo-webxwidth   = space.
+  cs_layo-webxheight  = space.
+ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form set_grid_fcat_0100
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*&      <-- LT_FCAT
+*&---------------------------------------------------------------------*
+FORM set_grid_fcat_0100  CHANGING ct_fcat TYPE lvc_t_fcat.
+  TYPES: BEGIN OF ty_spec,
+           fieldname  TYPE char30,
+           coltext    TYPE char40,
+           scrtext_l  TYPE char40,
+           scrtext_m  TYPE char20,
+           scrtext_s  TYPE char10,
+           col_opt    TYPE char1,
+           no_out     TYPE char1,
+           fix_column TYPE char1,
+           outputlen  TYPE numc06,
+           no_sign    TYPE char1,
+         END OF ty_spec,
+
+         BEGIN OF ty_spec_emphasize,
+           fieldname TYPE char30,
+           emphasize TYPE char4,
+         END OF ty_spec_emphasize,
+
+         BEGIN OF ty_spec_accept_negative,
+           fieldname TYPE char30,
+           ref_field TYPE lvc_rfname,
+           ref_table TYPE lvc_rtname,
+         END OF ty_spec_accept_negative,
+
+         ty_t_spec     TYPE HASHED TABLE OF ty_spec WITH UNIQUE KEY primary_key COMPONENTS fieldname,
+         ty_t_spec_emp TYPE STANDARD TABLE OF ty_spec_emphasize WITH EMPTY KEY,
+         ty_t_spec_neg TYPE STANDARD TABLE OF ty_spec_accept_negative WITH EMPTY KEY.
+
+  CALL FUNCTION 'LVC_FIELDCATALOG_MERGE'
+    EXPORTING
+      i_buffer_active        = gs_spec-buffer_active               " Buffer active
+      i_structure_name       = con_citc
+      i_client_never_display = con_true
+      i_bypassing_buffer     = gs_spec-bypassing_buffer
+    CHANGING
+      ct_fieldcat            = ct_fcat[]                 " Field Catalog with Field Descriptions
+    EXCEPTIONS
+      inconsistent_interface = 1                " Call parameter combination error
+      program_error          = 2                " Program Errors
+      OTHERS                 = 3.
+  IF sy-subrc <> 0.
+    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+      WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ENDIF.
+
+
+  " set additional specs
+  DATA(specs) = VALUE ty_t_spec(
+    ( fieldname = 'LEVEL1' coltext = 'Level 1' scrtext_l = 'Level 1' no_out = abap_true
+      scrtext_m = 'Level 1' scrtext_s = 'Level 1' col_opt = abap_true )
+    ( fieldname = 'LEVEL2' coltext = 'Level 2' scrtext_l = 'Level 2' no_out = abap_true
+      scrtext_m = 'Level 2' scrtext_s = 'Level 2' col_opt = abap_true )
+    ( fieldname = 'LEVEL3' coltext = 'Level 3' scrtext_l = 'Level 3' no_out = abap_true
+      scrtext_m = 'Level 3' scrtext_s = 'Level 3' col_opt = abap_true )
+    ( fieldname = 'LEVEL4' coltext = 'Level 4' scrtext_l = 'Level 4' no_out = abap_true
+      scrtext_m = 'Level 4' scrtext_s = 'Level 4' col_opt = abap_true )
+    ( fieldname = 'LEVEL5' coltext = 'Level 5' scrtext_l = 'Level 5' no_out = abap_true
+      scrtext_m = 'Level 5' scrtext_s = 'Level 5' col_opt = abap_true )
+    ( fieldname = 'GL_ACCOUNT' coltext = 'G\L Account' scrtext_l = 'G\L Account'
+      scrtext_m = 'G\L Account' scrtext_s = 'G\L Acc.' col_opt = abap_true )
+    ( fieldname = 'GL_ACCOUNT_DESCRIPTION' coltext = 'G\L Account Description'
+      scrtext_l = 'G\L Account Description' col_opt = abap_true
+      scrtext_m = 'G\L Account Desc.' scrtext_s = 'G\L Acc. D' )
+    ( fieldname = 'CURRENCY' coltext = 'Currency' scrtext_l = 'Currency'
+      scrtext_m = 'Currency' scrtext_s = 'Currency' col_opt = abap_true )
+    ( fieldname = 'UNAUDITED_BALANCE' coltext = 'Unaudited Balance'
+      scrtext_l = 'Unaudited Balance' col_opt = abap_true
+      scrtext_m = 'Unaudited Balance' scrtext_s = 'Unaud Bal.' )
+    ( fieldname = 'ADJUSTMENT_DEBIT' coltext = 'Adjustment Debit' scrtext_l = 'Adjustment Debit'
+      scrtext_m = 'Adjustment Dr' scrtext_s = 'Dr' fix_column = abap_true outputlen = 32 )
+    ( fieldname = 'ADJUSTMENT_CREDIT' scrtext_l = 'Adjustment Credit'
+      scrtext_m = 'Adjustment Cr' scrtext_s = 'Cr' fix_column = abap_true outputlen = 32 )
+    ( fieldname = 'AUDITED_BALANCE' coltext = 'Audited Balance'
+      scrtext_l = 'Audited Balance' col_opt = abap_true
+      scrtext_m = 'Audited Balance' scrtext_s = 'Audited' )
+    ( fieldname = 'FISCAL_CORRECTION_PERMANENT' scrtext_l = 'Fiscal Correction Permanent'
+      scrtext_m = 'Permanent' scrtext_s = 'Permanent' fix_column = abap_true outputlen = 32 )
+    ( fieldname = 'FISCAL_CORRECTION_TIMING' scrtext_l = 'Fiscal Correction Timing'
+      scrtext_m = 'Timing' scrtext_s = 'Timing' fix_column = abap_true outputlen = 32 )
+    ( fieldname = 'FISCAL_BALANCE' coltext = 'Fiscal Balance' scrtext_l = 'Fiscal Balance'
+      scrtext_m = 'Fiscal Balance' scrtext_s = 'Fisc. Bal.' col_opt = abap_true )
+    ( fieldname = 'REMARKS' coltext = 'Remarks' scrtext_l = 'Remarks'
+      scrtext_m = 'Remarks' scrtext_s = 'Remarks' fix_column = abap_true outputlen = 50 )
+    ( fieldname = 'MAPPING_CIT_RETURN_1771_IA' coltext = '1771-I' scrtext_l = '1771-I'
+      scrtext_m = '1771-I' scrtext_s = '1771-I' col_opt = abap_true )
+    ( fieldname = 'MAPPING_CIT_RETURN_1771_I' coltext = 'Fiscal Correction'
+      scrtext_m = 'Fiscal Correction' scrtext_s = 'Fiscal Correction-I'
+      scrtext_l = 'Fiscal Correction' col_opt = abap_true )
+    ( fieldname = 'MAPPING_CIT_RETURN_1771_II' coltext = '1771-II' scrtext_l = '1771-II'
+      scrtext_m = '1771-II' scrtext_s = '1771-II' col_opt = abap_true )
+    ( fieldname = 'IS_CORRECTION_PERMANENT' no_out = abap_true )
+    ( fieldname = 'IS_CORRECTION_TIMING' no_out = abap_true )
+    ( fieldname = 'CORRECTION_FORMULA' no_out = abap_true )
+    ( fieldname = 'INITIAL_DEPRE' no_out = abap_true ) ).
+
+
+  LOOP AT ct_fcat REFERENCE INTO DATA(fcat).
+
+    ASSIGN specs[ KEY primary_key fieldname = fcat->fieldname ] TO FIELD-SYMBOL(<spec>).
+    IF <spec> IS ASSIGNED.
+      fcat->coltext = <spec>-coltext.
+      fcat->scrtext_l = <spec>-scrtext_l.
+      fcat->scrtext_m = <spec>-scrtext_m.
+      fcat->scrtext_s = <spec>-scrtext_s.
+      fcat->col_opt = <spec>-col_opt.
+      fcat->no_out = <spec>-no_out.
+      fcat->fix_column = <spec>-fix_column.
+      fcat->outputlen = <spec>-outputlen.
+    ENDIF.
+
+    UNASSIGN <spec>.
+
+  ENDLOOP.
+
+  DATA(spec_emps) = VALUE ty_t_spec_emp(
+    ( fieldname = 'ADJUSTMENT_DEBIT' emphasize = 'X' )
+    ( fieldname = 'ADJUSTMENT_CREDIT' emphasize = 'X' )
+    ( fieldname = 'FISCAL_CORRECTION_PERMANENT' emphasize = 'C210' )
+    ( fieldname = 'FISCAL_CORRECTION_TIMING' emphasize = 'C210' )
+    ( fieldname = 'MAPPING_CIT_RETURN_1771_IA' emphasize = 'C300' )
+    ( fieldname = 'MAPPING_CIT_RETURN_1771_I' emphasize = 'C300' )
+    ( fieldname = 'MAPPING_CIT_RETURN_1771_II' emphasize = 'C300' ) ).
+
+*  LOOP AT spec_emps INTO DATA(spec_emp).
+*    ASSIGN ct_fcat[ fieldname = spec_emp-fieldname ] TO FIELD-SYMBOL(<fcat>).
+*    IF <fcat> IS ASSIGNED.
+*      <fcat>-emphasize = spec_emp-emphasize.
+*    ENDIF.
+*
+*    UNASSIGN <fcat>.
+*
+*  ENDLOOP.
+  DATA(spec_negative_sign) = VALUE ty_t_spec_neg(
+   ( fieldname = 'FISCAL_CORRECTION_PERMANENT' ref_field = 'HSL01' ref_table = 'FAGLFLEXT_BCK' )
+   ( fieldname = 'FISCAL_CORRECTION_TIMING' ref_field = 'HSL01' ref_table = 'FAGLFLEXT_BCK' )
+   ( fieldname = 'ADJUSTMENT_CREDIT' ref_field = 'HSL01' ref_table = 'FAGLFLEXT_BCK' ) ).
+
+  LOOP AT spec_negative_sign INTO DATA(spec_neg).
+    ASSIGN ct_fcat[ fieldname = spec_neg-fieldname ] TO FIELD-SYMBOL(<ref>).
+    IF <ref> IS ASSIGNED.
+      <ref>-ref_field = spec_neg-ref_field.
+      <ref>-ref_table = spec_neg-ref_table.
+    ENDIF.
+
+    UNASSIGN <ref>.
+
+  ENDLOOP.
+
+  " key
+  ASSIGN ct_fcat[ fieldname = 'GL_ACCOUNT' ]-key TO FIELD-SYMBOL(<key1>).
+  IF <key1> IS ASSIGNED.
+    <key1> = abap_true.
+  ENDIF.
+  ASSIGN ct_fcat[ fieldname = 'GL_ACCOUNT_DESCRIPTION' ]-key TO FIELD-SYMBOL(<key2>).
+  IF <key2> IS ASSIGNED.
+    <key2> = abap_true.
+  ENDIF.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form set_grid_hype_0100
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*&      <-- LT_FCAT
+*&      <-- LT_HYPE
+*&---------------------------------------------------------------------*
+FORM set_grid_hype_0100  CHANGING ct_fcat TYPE lvc_t_fcat
+                                  ct_hype TYPE lvc_t_hype.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form set_grid_drdn_0100
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*&      <-- LT_FCAT
+*&---------------------------------------------------------------------*
+FORM set_grid_drdn_0100  CHANGING ct_fcat TYPE lvc_t_fcat.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form set_grid_butt_0100
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*&      <-- LT_FCAT
+*&---------------------------------------------------------------------*
+FORM set_grid_butt_0100  CHANGING ct_fcat TYPE lvc_t_fcat.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form set_grid_onf4_0100
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM set_grid_onf4_0100 .
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form set_grid_events_0100
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+FORM set_grid_events_0100 .
+
+  gr_events_d0100 = NEW #( ).
+  SET HANDLER gr_events_d0100->data_changed FOR gr_grid_d0100.
+  SET HANDLER gr_events_d0100->data_changed_finished FOR gr_grid_d0100.
+  SET HANDLER gr_events_d0100->print_top_of_list FOR gr_grid_d0100.
+
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form set_grid_edit_0100
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*&      <-- LS_LAYO
+*&      <-- LT_FCAT
+*&---------------------------------------------------------------------*
+FORM set_grid_edit_0100  CHANGING cs_layo TYPE lvc_s_layo
+                                  ct_fcat TYPE lvc_t_fcat.
+
+  DATA lt_edit TYPE lvc_t_styl.
+
+  " edit column
+  ASSIGN ct_fcat[ fieldname = 'ADJUSTMENT_DEBIT' ] TO FIELD-SYMBOL(<dr>).
+  IF <dr> IS ASSIGNED.
+    <dr>-edit = abap_true.
+  ENDIF.
+  ASSIGN ct_fcat[ fieldname = 'ADJUSTMENT_CREDIT' ] TO FIELD-SYMBOL(<cr>).
+  IF <cr> IS ASSIGNED.
+    <cr>-edit = abap_true.
+  ENDIF.
+  ASSIGN ct_fcat[ fieldname = 'REMARKS' ] TO FIELD-SYMBOL(<remark>).
+  IF <remark> IS ASSIGNED.
+    <remark>-edit = abap_true.
+  ENDIF.
+
+  " edit cell
+  cs_layo-stylefname = 'HANDLE_STYLE'.
+  lt_edit = VALUE #( ( fieldname = 'FISCAL_CORRECTION_PERMANENT'
+                       style = cl_gui_alv_grid=>mc_style_enabled
+                       style2 = space
+                       style3 = space
+                       style4 = space
+                       maxlen = 23 )
+                     ( fieldname = 'FISCAL_CORRECTION_TIMING'
+                       style = cl_gui_alv_grid=>mc_style_enabled
+                       style2 = space
+                       style3 = space
+                       style4 = space
+                       maxlen = 23 )   ).
+
+  LOOP AT gt_outtab REFERENCE INTO DATA(outline)
+    WHERE correction_formula IS INITIAL.
+
+    outline->handle_style = VALUE #( ( LINES OF lt_edit ) ).
+
+  ENDLOOP.
+
+  DATA(gl_acc_range) = VALUE zif_asset_depre_fisc_c_repo=>ty_t_gl_acc_range( sign = 'I'
+                                                                             option = 'EQ'
+                               ( low = 'REVENUE' )
+                               ( low = 'COGS' )
+                               ( low = 'GPL' )
+                               ( low = 'OPEX' )
+                               ( low = 'OPL' )
+                               ( low = 'OIE' )
+                               ( low = 'NPL' )
+                               ( low = 'OCI' )
+                               ( low = 'COMPRE' ) ).
+
+  CLEAR lt_edit.
+  lt_edit = VALUE #( ( fieldname = 'UNAUDITED_BALANCE'
+                       style = cl_gui_alv_grid=>mc_style_disabled
+                       style2 = space
+                       style3 = space
+                       style4 = space )
+                     ( fieldname = 'ADJUSTMENT_DEBIT'
+                       style = cl_gui_alv_grid=>mc_style_disabled
+                       style2 = space
+                       style3 = space
+                       style4 = space )
+                     ( fieldname = 'ADJUSTMENT_CREDIT'
+                       style = cl_gui_alv_grid=>mc_style_disabled
+                       style2 = space
+                       style3 = space
+                       style4 = space )
+                     ( fieldname = 'AUDITED_BALANCE'
+                       style = cl_gui_alv_grid=>mc_style_disabled
+                       style2 = space
+                       style3 = space
+                       style4 = space )
+                     ( fieldname = 'FISCAL_CORRECTION_PERMANENT'
+                       style = cl_gui_alv_grid=>mc_style_disabled
+                       style2 = space
+                       style3 = space
+                       style4 = space )
+                     ( fieldname = 'FISCAL_CORRECTION_TIMING'
+                       style = cl_gui_alv_grid=>mc_style_disabled
+                       style2 = space
+                       style3 = space
+                       style4 = space )
+                     ( fieldname = 'FISCAL_BALANCE'
+                       style = cl_gui_alv_grid=>mc_style_disabled
+                       style2 = space
+                       style3 = space
+                       style4 = space )
+                     ( fieldname = 'REMARKS'
+                       style = cl_gui_alv_grid=>mc_style_disabled
+                       style2 = space
+                       style3 = space
+                       style4 = space ) ).
+
+  LOOP AT gt_outtab REFERENCE INTO DATA(outtab_sum)
+    WHERE gl_account IN gl_acc_range.
+
+    outtab_sum->handle_style = VALUE #( ( LINES OF lt_edit ) ).
+
+  ENDLOOP.
+
+  CASE gs_spec-edit_event.
+    WHEN con_edit_event_enter.
+      gr_grid_d0100->register_edit_event(
+        EXPORTING
+          i_event_id = cl_gui_alv_grid=>mc_evt_enter ).
+    WHEN con_edit_event_modify.
+      gr_grid_d0100->register_edit_event(
+        EXPORTING
+          i_event_id = cl_gui_alv_grid=>mc_evt_modified ).
+  ENDCASE.
+
+  CASE gs_spec-edit_mode.
+    WHEN con_edit_mode_change.
+      gr_grid_d0100->set_ready_for_input(
+          i_ready_for_input = 1
+      ).
+    WHEN con_edit_mode_display.
+      gr_grid_d0100->set_ready_for_input(
+          i_ready_for_input = 0
+      ).
+  ENDCASE.
+
+  cs_layo-no_rowins = abap_true.
+  cs_layo-no_rowmove = abap_true.
+
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  d0100_event_data_changed_finis
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+FORM d0100_event_data_changed_finis .                       "#EC *
+  DATA lt_edit TYPE lvc_t_styl.
+  lt_edit = VALUE #( ( fieldname = 'UNAUDITED_BALANCE'
+                       style = cl_gui_alv_grid=>mc_style_disabled
+                       style2 = space
+                       style3 = space
+                       style4 = space )
+                     ( fieldname = 'ADJUSTMENT_DEBIT'
+                       style = cl_gui_alv_grid=>mc_style_disabled
+                       style2 = space
+                       style3 = space
+                       style4 = space )
+                     ( fieldname = 'ADJUSTMENT_CREDIT'
+                       style = cl_gui_alv_grid=>mc_style_disabled
+                       style2 = space
+                       style3 = space
+                       style4 = space )
+                     ( fieldname = 'AUDITED_BALANCE'
+                       style = cl_gui_alv_grid=>mc_style_disabled
+                       style2 = space
+                       style3 = space
+                       style4 = space )
+                     ( fieldname = 'FISCAL_CORRECTION_PERMANENT'
+                       style = cl_gui_alv_grid=>mc_style_disabled
+                       style2 = space
+                       style3 = space
+                       style4 = space )
+                     ( fieldname = 'FISCAL_CORRECTION_TIMING'
+                       style = cl_gui_alv_grid=>mc_style_disabled
+                       style2 = space
+                       style3 = space
+                       style4 = space )
+                     ( fieldname = 'FISCAL_BALANCE'
+                       style = cl_gui_alv_grid=>mc_style_disabled
+                       style2 = space
+                       style3 = space
+                       style4 = space )
+                     ( fieldname = 'REMARKS'
+                       style = cl_gui_alv_grid=>mc_style_disabled
+                       style2 = space
+                       style3 = space
+                       style4 = space ) ).
+
+  DATA(sum_updated) = NEW zcl_citc_data_service02( NEW zcl_asset_depre_fisc_c_repo( )
+                        )->zif_citc_data_service~generate_summarize(
+                          CORRESPONDING #( gt_outtab ) ).
+
+  DATA(gl_acc_range) = VALUE zif_asset_depre_fisc_c_repo=>ty_t_gl_acc_range( sign = 'I'
+                                                                             option = 'EQ'
+                               ( low = 'REVENUE' )
+                               ( low = 'COGS' )
+                               ( low = 'GPL' )
+                               ( low = 'OPEX' )
+                               ( low = 'OPL' )
+                               ( low = 'OIE' )
+                               ( low = 'NPL' )
+                               ( low = 'OCI' )
+                               ( low = 'COMPRE' ) ).
+
+  SELECT *
+  FROM @sum_updated AS s
+  WHERE gl_account IN @gl_acc_range
+  INTO TABLE @sum_updated.
+
+  LOOP AT sum_updated INTO DATA(line_sum_updated).
+    ASSIGN gt_outtab[ gl_account = line_sum_updated-gl_account ]
+      TO FIELD-SYMBOL(<line_sum>).
+    IF <line_sum> IS ASSIGNED.
+      <line_sum> = CORRESPONDING #( line_sum_updated ).
+      <line_sum>-handle_style = VALUE #( ( LINES OF lt_edit ) ).
+      <line_sum>-color = 'C319'.
+    ENDIF.
+
+  ENDLOOP.
+
+ENDFORM.                    " d0100_event_data_changed_finis
+
+FORM set_grid_color_0100 CHANGING cs_layo TYPE lvc_s_layo.
+  cs_layo-info_fname = 'COLOR'.
+
+  DATA(gl_acc_range) = VALUE zif_asset_depre_fisc_c_repo=>ty_t_gl_acc_range( sign = 'I'
+                                                                             option = 'EQ'
+                               ( low = 'REVENUE' )
+                               ( low = 'COGS' )
+                               ( low = 'GPL' )
+                               ( low = 'OPEX' )
+                               ( low = 'OPL' )
+                               ( low = 'OIE' )
+                               ( low = 'NPL' )
+                               ( low = 'OCI' )
+                               ( low = 'COMPRE' ) ).
+
+  LOOP AT gt_outtab REFERENCE INTO DATA(line_outtab)
+    WHERE gl_account IN gl_acc_range.
+    line_outtab->color = 'C319'.
+  ENDLOOP.
+
+ENDFORM.
+
+FORM set_header_0100.
+  gr_docking_container = NEW cl_gui_docking_container(
+    repid                   = sy-repid
+    dynnr                   = '0100'
+    ratio                   = 15
+    side                    = cl_gui_docking_container=>dock_at_top
+  ).
+
+  gr_document = NEW cl_dd_document( ).
+
+  SELECT SINGLE a~name1
+  FROM t001 AS t
+  INNER JOIN adrc AS a ON t~bukrs = @p_bukrs
+                      AND t~adrnr = a~addrnumber
+   INTO @DATA(name).
+
+  gr_document->add_text(
+    EXPORTING
+      text_table    = VALUE #( ( name )
+                               ( 'Corporate Income Tax Calculation' )
+                               ( |FY{ p_gjahr }| ) )
+      sap_emphasis  = cl_dd_document=>strong
+      sap_fontsize  = cl_dd_document=>medium
+      fix_lines = 'X'
+  ).
+
+  gr_document->display_document(
+    EXPORTING
+      parent             = gr_docking_container
+  ).
+
+ENDFORM.
+
+FORM print_top_of_list.
+
+  SELECT SINGLE a~name1
+  FROM t001 AS t
+  INNER JOIN adrc AS a ON t~bukrs = @p_bukrs
+                      AND t~adrnr = a~addrnumber
+   INTO @DATA(name).
+
+  WRITE name && ' Corporate Income Tax Calculation' && ' FY' && p_gjahr.
+
+
+ENDFORM.

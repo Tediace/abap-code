@@ -1,0 +1,725 @@
+CLASS zcl_avalon_stg_data_service DEFINITION
+  PUBLIC
+  INHERITING FROM zcl_data_service_abstract
+  CREATE PUBLIC .
+
+  PUBLIC SECTION.
+    TYPES: BEGIN OF ty_file_data,  "Excel Importing Tables
+             buzei     TYPE string,
+             bukrs     TYPE string,
+             bldat     TYPE string,
+             budat     TYPE string,
+             xblnr     TYPE string,
+             bktxt     TYPE string,
+             blart     TYPE string,
+             waers     TYPE string,
+             umskz     TYPE string,
+             hkont     TYPE string,
+             kunnr     TYPE string,
+             lifnr     TYPE string,
+             mwskz     TYPE string,
+             fwbas     TYPE string,
+             wrbtr     TYPE string,
+             dmbtr     TYPE string,
+             valut     TYPE string,
+             zuonr     TYPE string,
+             vbund     TYPE string,
+             kostl     TYPE string,
+             aufnr     TYPE string,
+             werks     TYPE string,
+             prctr     TYPE string,
+             sgtxt     TYPE string,
+             zterm     TYPE string,
+             zfbdt     TYPE string,
+             zlsch     TYPE string,
+             xref1     TYPE string,
+             posid     TYPE string,
+             matnr     TYPE string,
+             bupla     TYPE string,
+             bcode     TYPE string,
+             long_text TYPE string,
+             xref2     TYPE string,
+             filename  TYPE string,
+           END OF ty_file_data,
+
+           ty_t_file_data TYPE STANDARD TABLE OF ty_file_data WITH EMPTY KEY.
+
+    METHODS zif_data_service~generate_data REDEFINITION.
+    METHODS zif_data_service~validate_by_obj REDEFINITION.
+
+
+  PROTECTED SECTION.
+  PRIVATE SECTION.
+    DATA mo_leaf_repo TYPE REF TO zif_repository.
+    DATA mo_session_generator TYPE REF TO lif_session_generator.
+    DATA mo_auth_obj TYPE REF TO lif_auth_obj.
+    DATA mo_master_data TYPE REF TO zif_repository.
+
+    METHODS check_amt IMPORTING im_amount     TYPE string
+                      RETURNING VALUE(result) TYPE string.
+
+    METHODS get_setleaf IMPORTING iv_setname    TYPE setleaf-setname
+                        RETURNING VALUE(result) TYPE bpc_range_tab.
+    METHODS generate_session RETURNING VALUE(result) TYPE zfava_post_stg-zsession.
+ENDCLASS.
+
+
+
+CLASS zcl_avalon_stg_data_service IMPLEMENTATION.
+  METHOD zif_data_service~generate_data.
+    FIELD-SYMBOLS <data> TYPE ty_t_file_data.
+    FIELD-SYMBOLS <result> TYPE zcl_ava_stg_repo=>ty_t_stg.
+
+    DATA : li_excel       TYPE ty_t_file_data,
+           li_zfmj_excel  TYPE STANDARD TABLE OF zfmj_excel,
+
+           lwa_upload     TYPE zfava_post_stg,
+           lwa_zfmj_excel TYPE zfava_post_stg,
+
+           lv_chk_len     TYPE i,
+           lv_count       TYPE i          VALUE 0,
+           lv_eline       TYPE i          VALUE 0,
+           lv_message     TYPE string
+           .
+
+    ASSIGN im_data TO <data>.
+    li_excel = <data>.
+
+    result = NEW zcl_ava_stg_repo=>ty_t_stg(  ).
+    ASSIGN result->* TO <result>.
+
+    DATA(lv_session) = generate_session( ).
+
+
+    LOOP AT li_excel INTO DATA(lwa_excel).
+
+      CLEAR: lwa_upload, lwa_zfmj_excel, lv_chk_len.
+
+      lv_eline = lv_eline + 1.
+
+
+      "Check if the line item is header line
+      IF lwa_excel-bukrs IS NOT INITIAL AND
+         lwa_excel-bldat IS NOT INITIAL AND
+         lwa_excel-budat IS NOT INITIAL AND
+         lwa_excel-bktxt IS NOT INITIAL AND
+         lwa_excel-blart IS NOT INITIAL AND
+         lwa_excel-waers IS NOT INITIAL.
+        lv_count = lv_count + 1.
+      ENDIF.
+
+      "If first column is empty then directly exit the loop
+      CLEAR lv_chk_len.
+      lv_chk_len = strlen( lwa_excel-buzei ).
+      IF lv_chk_len GT 3.
+        lwa_upload-zeline = lv_eline.
+        lwa_upload-zcount = lv_count.
+*        APPEND lwa_upload TO <result>.
+        CONTINUE.
+      ENDIF.
+
+      lwa_upload-zeline = lv_eline.
+      lwa_upload-zcount = lv_count.
+      lwa_upload-buzei = lwa_excel-buzei.
+      lwa_upload-bukrs = lwa_excel-bukrs.
+
+      "Only process field date not initial and length = 8
+      IF lwa_excel-bldat IS NOT INITIAL.
+        IF strlen( lwa_excel-bldat ) = 8
+          AND lwa_excel-bldat CO '0123456789'.
+          CONCATENATE lwa_excel-bldat+4(4) lwa_excel-bldat+2(2) lwa_excel-bldat(2) INTO lwa_upload-bldat.
+
+        ELSE.
+          RAISE EXCEPTION NEW zcx_data_service(
+            error_msg         = 'Error Date format'
+          ).
+        ENDIF.
+
+      ENDIF.
+*      CLEAR lv_chk_len.
+*      lv_chk_len = strlen( lwa_excel-bldat ).
+*      IF lv_chk_len = 8.
+*        CONCATENATE lwa_excel-bldat+4(4) lwa_excel-bldat+2(2) lwa_excel-bldat(2) INTO lwa_upload-bldat.
+*      ENDIF.
+      IF lwa_excel-budat IS NOT INITIAL.
+        IF strlen( lwa_excel-budat ) = 8
+          AND lwa_excel-budat CO '0123456789'.
+          CONCATENATE lwa_excel-budat+4(4) lwa_excel-budat+2(2) lwa_excel-budat(2) INTO lwa_upload-budat.
+
+        ELSE.
+          RAISE EXCEPTION NEW zcx_data_service(
+            error_msg         = 'Error Date format'
+          ).
+        ENDIF.
+
+      ENDIF.
+
+*      CLEAR lv_chk_len.
+*      lv_chk_len = strlen( lwa_excel-budat ).
+*      IF lv_chk_len = 8.
+*        CONCATENATE lwa_excel-budat+4(4) lwa_excel-budat+2(2) lwa_excel-budat(2) INTO lwa_upload-budat.
+*      ENDIF.
+
+      lwa_upload-xblnr = lwa_excel-xblnr.
+      lwa_upload-bktxt = lwa_excel-bktxt.
+      lwa_upload-blart = lwa_excel-blart.
+      lwa_upload-waers = lwa_excel-waers.
+      lwa_upload-umskz = lwa_excel-umskz.
+
+      CLEAR lv_chk_len.
+      lv_chk_len = strlen( lwa_excel-hkont ).
+      IF lv_chk_len LE 10.
+        CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+          EXPORTING
+            input  = lwa_excel-hkont
+          IMPORTING
+            output = lwa_upload-hkont.
+      ENDIF.
+
+      CLEAR lv_chk_len.
+      lv_chk_len  = strlen( lwa_excel-kunnr ).
+      IF lv_chk_len LE 10.
+        CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+          EXPORTING
+            input  = lwa_excel-kunnr
+          IMPORTING
+            output = lwa_upload-kunnr.
+      ENDIF.
+
+      CLEAR lv_chk_len.
+      lv_chk_len  = strlen( lwa_excel-lifnr ).
+      IF lv_chk_len LE 10.
+        CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+          EXPORTING
+            input  = lwa_excel-lifnr
+          IMPORTING
+            output = lwa_upload-lifnr.
+      ENDIF.
+
+      lwa_upload-mwskz = lwa_excel-mwskz.
+
+      lv_message = check_amt( lwa_excel-wrbtr ).
+      IF lv_message IS NOT INITIAL.
+
+        RAISE EXCEPTION NEW zcx_data_service(
+          error_msg         = lv_message ).
+
+      ENDIF.
+      lv_message = check_amt( lwa_excel-wrbtr ).
+      IF lv_message IS NOT INITIAL.
+
+        RAISE EXCEPTION NEW zcx_data_service(
+          error_msg         = lv_message ).
+
+      ENDIF.
+      lv_message = check_amt( lwa_excel-wrbtr ).
+      IF lv_message IS NOT INITIAL.
+
+        RAISE EXCEPTION NEW zcx_data_service(
+          error_msg         = lv_message ).
+
+      ENDIF.
+
+
+      lwa_upload-fwbas = lwa_excel-fwbas.
+      lwa_upload-wrbtr = lwa_excel-wrbtr.
+      lwa_upload-dmbtr = lwa_excel-dmbtr.
+
+      "Only process field date not initial and length = 8
+      CLEAR lv_chk_len.
+      lv_chk_len = strlen( lwa_excel-valut ).
+      IF lv_chk_len = 8.
+        CONCATENATE lwa_excel-valut+4(4) lwa_excel-valut+2(2) lwa_excel-valut(2) INTO lwa_upload-valut.
+      ENDIF.
+
+      lwa_upload-zuonr = lwa_excel-zuonr.
+
+      CLEAR lv_chk_len.
+      lv_chk_len  = strlen( lwa_excel-vbund ).
+      IF lv_chk_len LE 6.
+        CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+          EXPORTING
+            input  = lwa_excel-vbund
+          IMPORTING
+            output = lwa_upload-vbund.
+      ENDIF.
+
+      CLEAR lv_chk_len.
+      lv_chk_len  = strlen( lwa_excel-kostl ).
+      IF lv_chk_len LE 10.
+        CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+          EXPORTING
+            input  = lwa_excel-kostl
+          IMPORTING
+            output = lwa_upload-kostl.
+        .
+      ENDIF.
+
+      CLEAR lv_chk_len.
+      lv_chk_len  = strlen( lwa_excel-aufnr ).
+      IF lv_chk_len LE 12.
+        CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+          EXPORTING
+            input  = lwa_excel-aufnr
+          IMPORTING
+            output = lwa_upload-aufnr.
+        .
+      ENDIF.
+
+      CLEAR lv_chk_len.
+      lv_chk_len  = strlen( lwa_excel-werks ).
+      IF lv_chk_len EQ 4.
+        lwa_upload-werks = lwa_excel-werks.
+      ENDIF.
+
+      CLEAR lv_chk_len.
+      lv_chk_len  = strlen( lwa_excel-prctr ).
+      IF lv_chk_len LE 10.
+        CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+          EXPORTING
+            input  = lwa_excel-prctr
+          IMPORTING
+            output = lwa_upload-prctr.
+        .
+      ENDIF.
+
+      lwa_upload-sgtxt = lwa_excel-sgtxt.
+      lwa_upload-zterm = lwa_excel-zterm.
+
+      "Only process field date not initial and length = 8
+      CLEAR lv_chk_len.
+      lv_chk_len = strlen( lwa_excel-zfbdt ).
+      IF lv_chk_len = 8.
+        CONCATENATE lwa_excel-zfbdt+4(4) lwa_excel-zfbdt+2(2) lwa_excel-zfbdt(2) INTO lwa_upload-zfbdt.
+      ENDIF.
+
+      lwa_upload-zlsch = lwa_excel-zlsch.
+      lwa_upload-posid = lwa_excel-posid.
+      lwa_upload-xref1 = lwa_excel-xref1.
+      lwa_upload-matnr = lwa_excel-matnr.
+      lwa_upload-bupla = lwa_excel-bupla.
+      lwa_upload-bcode = lwa_excel-bcode.
+      lwa_upload-long_text = lwa_excel-long_text.
+      lwa_upload-xref2 = lwa_excel-xref2.
+      lwa_upload-filename = lwa_excel-filename.
+
+*      APPEND lwa_upload TO <result>.
+      APPEND INITIAL LINE TO <result> ASSIGNING FIELD-SYMBOL(<lwa_result>).
+      <lwa_result> = CORRESPONDING #( lwa_upload ).
+      <lwa_result>-zsession = lv_session.
+      <lwa_result>-zcount = lwa_upload-zcount.
+      <lwa_result>-zeline = lwa_upload-zeline.
+
+    ENDLOOP.
+
+  ENDMETHOD.
+
+  METHOD zif_data_service~validate_by_obj.
+
+    DATA: li_upload      TYPE zcl_ava_stg_repo=>ty_t_stg,
+          li_detail      TYPE zcl_ava_stg_repo=>ty_t_stg,
+          li_log_h       TYPE zcl_ava_log_repository=>ty_source-t_log_header,
+          li_log_d       TYPE zcl_ava_log_repository=>ty_source-t_log_detail,
+          lr_bukrs_bcode TYPE bpc_range_tab,
+          lwa_upload     TYPE zfava_post_stg,
+          lwa_detail     TYPE zfava_post_stg,
+          lwa_header     TYPE zfava_post_stg,
+          lwa_error_h    TYPE zfava_log_h,
+          lwa_error_d    TYPE zfava_log_d,
+
+          lv_message     TYPE bapiret2-message,
+          lv_chk_co      TYPE abap_bool.
+
+    DATA: lo_auth_obj         TYPE REF TO lif_auth_obj,
+          lo_master_data_repo TYPE REF TO zif_repository.
+
+    DATA p_path TYPE localfile.
+
+    DATA(lo_data_stg) = CAST zif_ava_data_stg( im_obj ).
+    DATA(li_chk_bukrs) = lo_data_stg->it_data.
+    ASSIGN lo_data_stg->it_data[ 1 ]-filename TO FIELD-SYMBOL(<filename>).
+    IF <filename> IS ASSIGNED.
+      p_path = <filename>.
+    ELSE.
+      p_path = lo_data_stg->iv_filepath.
+    ENDIF.
+    IF mo_auth_obj IS BOUND.
+      lo_auth_obj = mo_auth_obj.
+    ELSE.
+      lo_auth_obj = NEW lcl_auth_obj( ).
+    ENDIF.
+    IF mo_master_data IS BOUND.
+      lo_master_data_repo = mo_master_data.
+    ELSE.
+      lo_master_data_repo = NEW lcl_master_data_repo( ).
+    ENDIF.
+
+    DATA(lo_master_data) = CAST lif_master_data( lo_master_data_repo->read_by_obj( lo_data_stg ) ).
+
+
+
+    DELETE li_chk_bukrs WHERE bukrs IS INITIAL.
+    SORT li_chk_bukrs BY bukrs.
+    DELETE ADJACENT DUPLICATES FROM li_chk_bukrs COMPARING bukrs.
+
+    IF li_chk_bukrs IS NOT INITIAL.
+*      LOOP AT li_chk_bukrs INTO DATA(lw).
+*        AUTHORITY-CHECK OBJECT 'F_BKPF_BUK'
+*        ID 'ACTVT' FIELD '01'
+*        ID 'BUKRS' FIELD lw-bukrs.
+*        IF sy-subrc NE 0.
+*          RAISE EXCEPTION NEW zcx_data_service(
+*            error_msg         = |You are not authorized to post for company code { lw-bukrs }|
+*          ).
+*        ENDIF.
+*      ENDLOOP.
+
+      LOOP AT li_chk_bukrs INTO DATA(lw).
+        DATA(subrc) = lo_auth_obj->f_bkpf_buk( lw-bukrs ).
+        IF subrc NE 0.
+          RAISE EXCEPTION NEW zcx_data_service(
+            error_msg         = |You are not authorized to post for company code { lw-bukrs }|
+          ).
+        ENDIF.
+      ENDLOOP.
+    ENDIF.
+
+
+
+    lr_bukrs_bcode = get_setleaf( 'ZFI_BUKRS_BCODE' ).
+
+    LOOP AT lo_data_stg->it_data INTO lwa_upload.
+
+      "Check if the line item is header line (to create line item i_error if the data is invalid
+      IF lwa_upload-bukrs IS NOT INITIAL AND
+         lwa_upload-bldat IS NOT INITIAL AND
+         lwa_upload-budat IS NOT INITIAL AND
+         lwa_upload-bktxt IS NOT INITIAL AND
+         lwa_upload-blart IS NOT INITIAL AND
+         lwa_upload-waers IS NOT INITIAL.
+        lwa_header = lwa_upload.
+      ELSE.
+        "Temporary store 1 set of line item documents
+        "If all data is valid append to li_upload, else append header to i_log_d
+        APPEND lwa_upload TO li_detail.
+      ENDIF.
+
+      "Company Code
+      IF lwa_upload-bukrs IS NOT INITIAL AND lv_message IS INITIAL.
+        READ TABLE lo_master_data->it_t001 TRANSPORTING NO FIELDS WITH KEY bukrs = lwa_upload-bukrs BINARY SEARCH.
+        IF sy-subrc <> 0.
+          CONCATENATE 'Invalid Company Code' lwa_upload-bukrs INTO lv_message SEPARATED BY space.
+        ENDIF.
+      ENDIF.
+
+      "Document Type
+      IF lwa_upload-blart IS NOT INITIAL AND lv_message IS INITIAL..
+        READ TABLE lo_master_data->it_t003t TRANSPORTING NO FIELDS WITH KEY blart = lwa_upload-blart BINARY SEARCH.
+        IF sy-subrc <> 0.
+          CONCATENATE 'Invalid Document Type' lwa_upload-blart INTO lv_message SEPARATED BY space.
+        ENDIF.
+      ENDIF.
+
+      "Currency
+      IF lwa_upload-waers IS NOT INITIAL AND lv_message IS INITIAL.
+        READ TABLE lo_master_data->it_tcurt TRANSPORTING NO FIELDS WITH KEY waers = lwa_upload-waers BINARY SEARCH.
+        IF sy-subrc <> 0.
+          CONCATENATE 'Invalid Currency' lwa_upload-waers INTO lv_message SEPARATED BY space.
+        ENDIF.
+      ENDIF.
+
+      "G/L Account
+      IF lwa_upload-hkont IS NOT INITIAL AND lv_message IS INITIAL.
+        READ TABLE lo_master_data->it_skat TRANSPORTING NO FIELDS WITH KEY saknr = lwa_upload-hkont BINARY SEARCH.
+        IF sy-subrc <> 0.
+          CONCATENATE 'Invalid G/L Account' lwa_upload-hkont INTO lv_message SEPARATED BY space.
+        ENDIF.
+      ENDIF.
+
+      "Customer
+      IF lwa_upload-kunnr IS NOT INITIAL AND lv_message IS INITIAL.
+        READ TABLE lo_master_data->it_kna1 TRANSPORTING NO FIELDS WITH KEY kunnr = lwa_upload-kunnr BINARY SEARCH.
+        IF sy-subrc <> 0.
+          CONCATENATE 'Invalid Customer' lwa_upload-kunnr INTO lv_message SEPARATED BY space.
+        ENDIF.
+      ENDIF.
+
+      "Vendor
+      IF lwa_upload-lifnr IS NOT INITIAL AND lv_message IS INITIAL.
+        READ TABLE lo_master_data->it_lfa1 TRANSPORTING NO FIELDS WITH KEY lifnr = lwa_upload-lifnr BINARY SEARCH.
+        IF sy-subrc <> 0.
+          CONCATENATE 'Invalid Vendor' lwa_upload-lifnr INTO lv_message SEPARATED BY space.
+        ENDIF.
+      ENDIF.
+
+      "Tax Code
+      IF lwa_upload-mwskz IS NOT INITIAL AND lv_message IS INITIAL.
+        READ TABLE lo_master_data->it_t007s TRANSPORTING NO FIELDS WITH KEY mwskz = lwa_upload-mwskz BINARY SEARCH.
+        IF sy-subrc <> 0.
+          CONCATENATE 'Invalid Tax Code' lwa_upload-mwskz INTO lv_message SEPARATED BY space.
+        ENDIF.
+      ENDIF.
+
+      "Trading Partner
+      IF lwa_upload-vbund IS NOT INITIAL AND lv_message IS INITIAL.
+        READ TABLE lo_master_data->it_t880 TRANSPORTING NO FIELDS WITH KEY rcomp = lwa_upload-vbund BINARY SEARCH.
+        IF sy-subrc <> 0.
+          CONCATENATE 'Invalid Trading Partner' lwa_upload-vbund INTO lv_message SEPARATED BY space.
+        ENDIF.
+      ENDIF.
+
+      "Cost Center
+      IF lwa_upload-kostl IS NOT INITIAL AND lv_message IS INITIAL.
+        READ TABLE lo_master_data->it_cskt TRANSPORTING NO FIELDS WITH KEY kostl = lwa_upload-kostl BINARY SEARCH.
+        IF sy-subrc <> 0.
+          CONCATENATE 'Invalid Cost Center' lwa_upload-kostl INTO lv_message SEPARATED BY space.
+        ENDIF.
+      ENDIF.
+
+      "Internal Order
+      IF lwa_upload-aufnr IS NOT INITIAL AND lv_message IS INITIAL.
+        READ TABLE lo_master_data->it_aufk TRANSPORTING NO FIELDS WITH KEY aufnr = lwa_upload-aufnr BINARY SEARCH.
+        IF sy-subrc <> 0.
+          CONCATENATE 'Invalid Internal Order' lwa_upload-aufnr INTO lv_message SEPARATED BY space.
+        ENDIF.
+      ENDIF.
+
+      "Plant
+      IF lwa_upload-werks IS NOT INITIAL AND lv_message IS INITIAL.
+        READ TABLE lo_master_data->it_t001w TRANSPORTING NO FIELDS WITH KEY werks = lwa_upload-werks BINARY SEARCH.
+        IF sy-subrc <> 0.
+          CONCATENATE 'Invalid Plant' lwa_upload-werks INTO lv_message SEPARATED BY space.
+        ENDIF.
+      ENDIF.
+
+      "Profit Center
+      IF lwa_upload-prctr IS NOT INITIAL AND lv_message IS INITIAL.
+        READ TABLE lo_master_data->it_cepct TRANSPORTING NO FIELDS WITH KEY prctr = lwa_upload-prctr BINARY SEARCH.
+        IF sy-subrc <> 0.
+          CONCATENATE 'Invalid Profit Center' lwa_upload-prctr INTO lv_message SEPARATED BY space.
+        ENDIF.
+      ENDIF.
+
+      "Payment Terms
+      IF lwa_upload-zterm IS NOT INITIAL AND lv_message IS INITIAL.
+        READ TABLE lo_master_data->it_tvzbt TRANSPORTING NO FIELDS WITH KEY zterm = lwa_upload-zterm BINARY SEARCH.
+        IF sy-subrc <> 0.
+          CONCATENATE 'Invalid Payment Terms' lwa_upload-zterm INTO lv_message SEPARATED BY space.
+        ENDIF.
+      ENDIF.
+
+      "Payment Method
+      IF lwa_upload-zlsch IS NOT INITIAL AND lv_message IS INITIAL.
+        READ TABLE lo_master_data->it_t042zt TRANSPORTING NO FIELDS WITH KEY zlsch = lwa_upload-zlsch BINARY SEARCH.
+        IF sy-subrc <> 0.
+          CONCATENATE 'Invalid Payment Method' lwa_upload-zlsch INTO lv_message SEPARATED BY space.
+        ENDIF.
+      ENDIF.
+
+      "WBS
+      IF lwa_upload-posid IS NOT INITIAL AND lv_message IS INITIAL.
+        READ TABLE lo_master_data->it_prps TRANSPORTING NO FIELDS WITH KEY pbukr = lwa_header-bukrs                         "INS DEVINB GD2K903752 #3495 add - bukrs
+                                                           posid = lwa_upload-posid BINARY SEARCH.          "~
+        IF sy-subrc <> 0.
+          CONCATENATE 'Invalid WBS' lwa_upload-posid INTO lv_message SEPARATED BY space.
+        ENDIF.
+      ENDIF.
+
+      "MATERIAL
+      IF lwa_upload-matnr IS NOT INITIAL AND lv_message IS INITIAL.
+        READ TABLE lo_master_data->it_mara TRANSPORTING NO FIELDS WITH KEY matnr = lwa_upload-matnr BINARY SEARCH.
+        IF sy-subrc <> 0.
+          CONCATENATE 'Invalid Material Number' lwa_upload-posid INTO lv_message SEPARATED BY space.
+        ENDIF.
+      ENDIF.
+
+      "BUSINESS PLACE
+      IF lwa_upload-bupla IS NOT INITIAL AND lv_message IS INITIAL.
+        READ TABLE lo_master_data->it_j_1bbranch TRANSPORTING NO FIELDS WITH KEY bukrs  = lwa_header-bukrs                   "INS DEVINB GD2K903752 #3495 add - bukrs
+                                                                 branch = lwa_upload-bupla BINARY SEARCH.    "~
+        IF sy-subrc <> 0.
+          CONCATENATE 'Invalid Business Place' lwa_upload-posid INTO lv_message SEPARATED BY space.
+        ENDIF.
+      ENDIF.
+
+      IF lwa_header-bukrs IN lr_bukrs_bcode.
+        IF ( lwa_upload-lifnr IS NOT INITIAL OR lwa_upload-kunnr IS NOT INITIAL )
+        AND lwa_upload-bcode IS INITIAL
+        AND lv_message IS INITIAL.
+          CONCATENATE 'Branch Code is Mandatory for Vendor/Customer Line Items'
+                      lwa_upload-posid
+                 INTO lv_message
+                 SEPARATED BY space.
+        ENDIF.
+      ENDIF.
+
+      "Set Validation for Condition Below
+      "-  If profitability segment = not blank then
+      "   either profit center = not blank or cost center = not blank
+      "-  If cost center = not blank then profit segment = not blank
+      lv_chk_co = abap_true.
+      IF lv_message IS INITIAL.
+        IF lwa_upload-werks IS NOT INITIAL.
+          IF lwa_upload-prctr IS INITIAL
+            AND lwa_upload-kostl IS INITIAL
+            AND lwa_upload-posid IS INITIAL.
+            lv_chk_co = abap_false.
+          ENDIF.
+        ENDIF.
+
+        "-  If cost center = not blank then profit segment = not blank
+        IF lwa_upload-kostl IS NOT INITIAL AND
+           lwa_upload-werks IS INITIAL.
+          lv_chk_co = abap_false.
+        ENDIF.
+
+        IF lv_chk_co = abap_false.
+          lv_message = 'CO Object is not defined'.
+        ENDIF.
+      ENDIF.
+
+      AT END OF zcount.
+        "Only error line items are stored in log header and details internal table
+        IF lv_message IS NOT INITIAL.
+          lwa_error_h-zsession  = lwa_upload-zsession.
+          lwa_error_h-proc_user = sy-uname.
+          lwa_error_h-iffprocdt = sy-datum.
+          lwa_error_h-iffproctm = sy-uzeit.
+          lwa_error_h-zcount    = lwa_header-zcount.
+          lwa_error_h-zeline    = lwa_header-zeline.
+          lwa_error_h-zpath     = p_path.
+          lwa_error_h-bukrs     = lwa_header-bukrs.
+          lwa_error_h-bldat     = lwa_header-bldat.
+          lwa_error_h-budat     = lwa_header-budat.
+          lwa_error_h-xblnr     = lwa_header-xblnr.
+          lwa_error_h-bktxt     = lwa_header-bktxt.
+          lwa_error_h-blart     = lwa_header-blart.
+          lwa_error_h-waers     = lwa_header-waers.
+          lwa_error_h-type      = 'E'.
+          lwa_error_h-message   = lv_message.
+          APPEND lwa_error_h TO li_log_h.
+
+          LOOP AT li_detail INTO lwa_detail.
+            CLEAR lwa_error_d.
+            lwa_error_d-zsession  = lwa_upload-zsession.
+            lwa_error_d-proc_user = sy-uname.
+            lwa_error_d-iffprocdt = sy-datum.
+            lwa_error_d-iffproctm = sy-uzeit.
+            lwa_error_d-zcount    = lwa_detail-zcount.
+            lwa_error_d-zeline    = lwa_detail-zeline.
+            lwa_error_d-buzei     = lwa_detail-buzei.
+            lwa_error_d-umskz     = lwa_detail-umskz.
+            lwa_error_d-hkont     = lwa_detail-hkont.
+            lwa_error_d-kunnr     = lwa_detail-kunnr.
+            lwa_error_d-lifnr     = lwa_detail-lifnr.
+            lwa_error_d-mwskz     = lwa_detail-mwskz.
+            lwa_error_d-wrbtr     = lwa_detail-wrbtr.
+            lwa_error_d-dmbtr     = lwa_detail-dmbtr.
+            lwa_error_d-valut     = lwa_detail-valut.
+            lwa_error_d-zuonr     = lwa_detail-zuonr.
+            lwa_error_d-vbund     = lwa_detail-vbund.
+            lwa_error_d-kostl     = lwa_detail-kostl.
+            lwa_error_d-aufnr     = lwa_detail-aufnr.
+            lwa_error_d-werks     = lwa_detail-werks.
+            lwa_error_d-prctr     = lwa_detail-prctr.
+            lwa_error_d-sgtxt     = lwa_detail-sgtxt.
+            lwa_error_d-zterm     = lwa_detail-zterm.
+            lwa_error_d-zfbdt     = lwa_detail-zfbdt.
+            lwa_error_d-zlsch     = lwa_detail-zlsch.
+            lwa_error_d-xref1     = lwa_detail-xref1.
+            lwa_error_d-type      = 'E'.
+            lwa_error_d-message   = lv_message.
+            APPEND lwa_error_d TO li_log_d.
+          ENDLOOP.
+
+        ELSE.
+          APPEND lwa_header TO li_upload.
+          APPEND LINES OF li_detail TO li_upload.
+        ENDIF.
+
+        CLEAR: lwa_header, lwa_error_h, lwa_error_d, lv_message.
+        REFRESH: li_detail[].
+      ENDAT.
+    ENDLOOP.
+
+    result = NEW zcl_ava_validated_data_stg(
+      im_data    = li_upload
+      im_t_log_h = li_log_h
+      im_t_log_d = li_log_d
+      im_t_a003 = lo_master_data->it_a003 ).
+
+
+  ENDMETHOD.
+
+  METHOD check_amt.
+
+    DATA:
+      lv_count   TYPE i,
+      lv_message TYPE string.
+
+    IF im_amount = '0'. "check if amount is zero
+      result = 'Amount cannot be zero'(030).
+
+    ELSE.
+
+      IF im_amount CO '0123456789.-'. "check amount can only contain numeric, decimal separator(.) and negative sign
+        FIND ALL OCCURRENCES OF '.' IN im_amount MATCH COUNT lv_count. "check how many decimal separator (.)
+        IF lv_count > 1.
+          CONCATENATE 'Amount'
+                      im_amount
+                      'can only contain 1 decimal separator(.)'
+                      INTO lv_message
+                      SEPARATED BY space.
+          result = lv_message.
+        ENDIF.
+      ELSE.
+        CONCATENATE 'Amount'
+                    im_amount
+                    'must be numeric and decimal separator use (.)'
+                    INTO lv_message
+                    SEPARATED BY space.
+
+        result = lv_message.
+      ENDIF.
+
+    ENDIF.
+
+  ENDMETHOD.
+
+  METHOD get_setleaf.
+
+    DATA lo_repo TYPE REF TO zif_repository.
+
+    IF mo_leaf_repo IS BOUND.
+      lo_repo = mo_leaf_repo.
+    ELSE.
+      lo_repo = NEW zcl_setleaf_repository( ).
+    ENDIF.
+
+    DATA(lr_setleaf) = lo_repo->read( iv_setname ).
+    ASSIGN lr_setleaf->* TO FIELD-SYMBOL(<result>).
+    result = <result>.
+
+  ENDMETHOD.
+
+  METHOD generate_session.
+
+    DATA lo_session_generator TYPE REF TO lif_session_generator.
+
+    IF mo_session_generator IS BOUND.
+
+      lo_session_generator = mo_session_generator.
+
+    ELSE.
+      lo_session_generator = NEW lcl_session_generator( ).
+
+    ENDIF.
+
+    result = lo_session_generator->get_number(
+               im_nr_number = '01'
+               im_obj_name  = c_run_id
+             ).
+
+  ENDMETHOD.
+
+ENDCLASS.

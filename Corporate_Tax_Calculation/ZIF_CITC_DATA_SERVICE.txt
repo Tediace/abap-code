@@ -1,0 +1,25 @@
+INTERFACE zif_citc_data_service
+  PUBLIC .
+
+  TYPES ty_t_data TYPE STANDARD TABLE OF zst_citc_report WITH EMPTY KEY.
+  TYPES ty_t_periods_range TYPE RANGE OF poper.
+
+    CONSTANTS: BEGIN OF cons_formula,
+                 full  TYPE numc2 VALUE '01',
+                 _50   TYPE numc2 VALUE '02',
+                 depre TYPE numc2 VALUE '03',
+               END OF cons_formula.
+
+
+  METHODS generate_data IMPORTING source_data TYPE zif_citc_repository=>ty_t_source_citc
+                                  periods_range TYPE ty_t_periods_range
+                        RETURNING VALUE(result) TYPE ty_t_data.
+
+  METHODS calculate_fiscal_correction IMPORTING formula TYPE zde_cit_formula
+                                                unaudited_bal_after_adj TYPE hslxx12
+                                                current_year_asset_tax_depre TYPE hslxx12
+                                      RETURNING VALUE(result) TYPE hslxx12.
+
+  METHODS generate_summarize IMPORTING source_data TYPE ty_t_data
+                             RETURNING VALUE(result) TYPE ty_t_data.
+ENDINTERFACE.
