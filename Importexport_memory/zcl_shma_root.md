@@ -1,3 +1,0 @@
-test class shma root tedi
-shared memory
-
